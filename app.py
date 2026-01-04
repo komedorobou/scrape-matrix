@@ -469,12 +469,17 @@ def ragtag_get_product_detail(url):
         meta_desc = soup.select_one('meta[name="description"]')
         if meta_desc:
             desc_content = meta_desc.get('content', '')
-            # <br>で分割して最初の部分を商品名として使う
+            # <br>で分割して商品名を探す
             desc_parts = re.split(r'<br>|<BR>', desc_content)
-            if desc_parts:
-                product_name = desc_parts[0].strip()
-                if product_name and product_name != "FENDI":
-                    data["商品名"] = product_name
+            for part in desc_parts:
+                part = part.strip()
+                # 適切な長さ（2〜30文字）で、説明文っぽくないものを採用
+                if part and 2 <= len(part) <= 30:
+                    # 除外パターン: ブランド名のみ、「の商品」「公式」「通販」などを含む
+                    if not re.search(r'(の商品|公式|通販|買取|販売|サイト|RAGTAG|ラグタグ|送料)', part):
+                        if part not in ["FENDI", "GUCCI", "PRADA", "CHANEL", "HERMES", "CELINE", "LOEWE"]:
+                            data["商品名"] = part
+                            break
 
         # 品番（metaのdescriptionから抽出）
         # 例: 7VA114, 8BL135 など（数字とアルファベット両方含む5文字以上）
