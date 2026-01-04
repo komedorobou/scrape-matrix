@@ -21,6 +21,21 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
 
+    /* Material Iconsの文字化け対策 */
+    .material-symbols-outlined,
+    .material-symbols-rounded,
+    [class*="material-symbols"],
+    span[data-testid="stIconMaterial"] {
+        font-size: 0 !important;
+        visibility: hidden !important;
+        display: none !important;
+    }
+
+    /* サイドバー開閉ボタンを非表示にして代わりにシンプルに */
+    button[kind="header"] {
+        display: none !important;
+    }
+
     /* アニメーション定義 */
     @keyframes gradientShift {
         0% { background-position: 0% 50%; }
@@ -47,14 +62,29 @@ st.markdown("""
         animation: gradientShift 15s ease infinite;
     }
 
-    /* サイドバー（グラスモーフィズム） */
+    /* サイドバー（グラスモーフィズム）- 幅を広げる */
     [data-testid="stSidebar"] {
-        background: rgba(255, 255, 255, 0.15) !important;
+        background: rgba(255, 255, 255, 0.25) !important;
         backdrop-filter: blur(20px) !important;
         border-right: 1px solid rgba(255, 255, 255, 0.3) !important;
+        min-width: 350px !important;
+        width: 350px !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        width: 350px !important;
+        padding: 2rem 1.5rem !important;
     }
     [data-testid="stSidebar"] * {
         color: #2a3a3a !important;
+    }
+
+    /* サイドバーのヘッダー */
+    [data-testid="stSidebar"] h3 {
+        font-size: 1.3rem !important;
+        font-weight: 700 !important;
+        margin-bottom: 1rem !important;
+        padding-bottom: 0.5rem !important;
+        border-bottom: 2px solid rgba(138, 200, 216, 0.5) !important;
     }
 
     /* メインコンテンツエリア（グラスカード） */
@@ -90,30 +120,49 @@ st.markdown("""
 
     /* 入力フィールド（グラス風） */
     .stTextInput > div > div > input {
-        background: rgba(255, 255, 255, 0.6) !important;
-        border: 1px solid rgba(255, 255, 255, 0.8) !important;
-        border-radius: 16px !important;
-        color: #2a4a4a !important;
-        font-size: 16px !important;
-        padding: 12px 16px !important;
+        background: rgba(255, 255, 255, 0.85) !important;
+        border: 2px solid rgba(138, 200, 216, 0.4) !important;
+        border-radius: 12px !important;
+        color: #1a3a3a !important;
+        font-size: 18px !important;
+        font-weight: 500 !important;
+        padding: 14px 18px !important;
         transition: all 0.3s ease !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+    }
+    .stTextInput > div > div > input::placeholder {
+        color: #7a9a9a !important;
     }
     .stTextInput > div > div > input:focus {
-        border-color: #8ac8d8 !important;
-        box-shadow: 0 0 20px rgba(138, 200, 216, 0.4), 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-        transform: translateY(-1px);
+        border-color: #6ab8d8 !important;
+        background: rgba(255, 255, 255, 0.95) !important;
+        box-shadow: 0 0 20px rgba(138, 200, 216, 0.5), 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+        transform: translateY(-2px);
+    }
+
+    /* 入力フィールドのラベル */
+    .stTextInput label {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        color: #2a4a4a !important;
+        margin-bottom: 6px !important;
     }
 
     /* セレクトボックス */
     .stSelectbox > div > div {
-        background: rgba(255, 255, 255, 0.6) !important;
-        border: 1px solid rgba(255, 255, 255, 0.8) !important;
-        border-radius: 16px !important;
+        background: rgba(255, 255, 255, 0.85) !important;
+        border: 2px solid rgba(138, 200, 216, 0.4) !important;
+        border-radius: 12px !important;
         transition: all 0.3s ease !important;
     }
     .stSelectbox > div > div:hover {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+        border-color: #6ab8d8 !important;
+    }
+    .stSelectbox label {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        color: #2a4a4a !important;
     }
 
     /* スライダー */
@@ -256,15 +305,64 @@ st.markdown("""
 
     /* ラジオボタン（カード風） */
     .stRadio > div {
-        background: rgba(255, 255, 255, 0.4) !important;
+        background: rgba(255, 255, 255, 0.7) !important;
         border-radius: 16px !important;
-        padding: 12px !important;
-        border: 1px solid rgba(255, 255, 255, 0.5) !important;
+        padding: 16px !important;
+        border: 2px solid rgba(138, 200, 216, 0.3) !important;
         transition: all 0.3s ease !important;
     }
     .stRadio > div:hover {
-        background: rgba(255, 255, 255, 0.6) !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+        background: rgba(255, 255, 255, 0.85) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+        border-color: #8ac8d8 !important;
+    }
+    .stRadio label {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        color: #2a4a4a !important;
+    }
+    .stRadio > div > div > label {
+        font-size: 16px !important;
+        font-weight: 500 !important;
+        padding: 8px 12px !important;
+        border-radius: 10px !important;
+        transition: all 0.2s ease !important;
+    }
+    .stRadio > div > div > label:hover {
+        background: rgba(138, 200, 216, 0.2) !important;
+    }
+
+    /* キャプション（ヘルプテキスト） */
+    .stCaption, small, .element-container small {
+        font-size: 13px !important;
+        color: #4a6a6a !important;
+        background: rgba(255, 255, 255, 0.5) !important;
+        padding: 8px 12px !important;
+        border-radius: 8px !important;
+        display: inline-block !important;
+        margin-top: 4px !important;
+    }
+
+    /* ディバイダー */
+    hr {
+        border: none !important;
+        height: 2px !important;
+        background: linear-gradient(90deg, transparent, rgba(138, 200, 216, 0.5), transparent) !important;
+        margin: 1.5rem 0 !important;
+    }
+
+    /* スライダーのラベル */
+    .stSlider label {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        color: #2a4a4a !important;
+    }
+
+    /* スライダーの値表示 */
+    .stSlider [data-testid="stTickBarMin"],
+    .stSlider [data-testid="stTickBarMax"] {
+        font-weight: 600 !important;
+        color: #3a5a5a !important;
     }
 
     /* スクロールバー */
@@ -282,6 +380,11 @@ st.markdown("""
     }
     ::-webkit-scrollbar-thumb:hover {
         background: rgba(138, 200, 216, 0.7);
+    }
+
+    /* ヘルプアイコン（？マーク）を非表示 */
+    .stTooltipIcon {
+        display: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
