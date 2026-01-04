@@ -361,11 +361,9 @@ def komehyo_get_product_detail(url):
 def ragtag_build_url(brand, category):
     """RAGTAG: 検索URLを構築"""
     base_url = EC_SITES["RAGTAG"]["base_url"]
-    brand_clean = brand.lower().strip().replace(" ", "-")
-    if category:
-        return f"{base_url}/{category}/brand/{brand_clean}/"
-    else:
-        return f"{base_url}/brand/{brand_clean}/"
+    # 検索URL形式: https://www.ragtag.jp/search?fr=FENDI
+    brand_clean = brand.upper().strip().replace(" ", "")
+    return f"{base_url}/search?fr={brand_clean}"
 
 
 def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
@@ -374,7 +372,8 @@ def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
     page = 1
 
     while page <= max_pages:
-        url = f"{base_url}?page={page}"
+        # ページネーション: &page=2, &page=3...
+        url = f"{base_url}&page={page}" if page > 1 else base_url
 
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
@@ -386,16 +385,16 @@ def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
 
             soup = BeautifulSoup(res.text, 'html.parser')
 
-            # RAGTAGの商品リンクを取得
-            links = soup.select('a[href*="/item/"]')
+            # RAGTAGの商品リンクを取得（/item/ を含むリンク）
+            all_links = soup.find_all('a', href=True)
             new_urls = []
-            for a in links:
+            for a in all_links:
                 href = a.get('href', '')
-                if '/item/' in href and href not in new_urls:
-                    if href.startswith('/'):
-                        full_url = EC_SITES["RAGTAG"]["base_url"] + href
-                    elif href.startswith('http'):
+                if '/item/' in href:
+                    if href.startswith('http'):
                         full_url = href
+                    elif href.startswith('/'):
+                        full_url = EC_SITES["RAGTAG"]["base_url"] + href
                     else:
                         full_url = EC_SITES["RAGTAG"]["base_url"] + '/' + href
                     new_urls.append(full_url)
@@ -429,42 +428,49 @@ def ragtag_get_product_detail(url):
 
         data = {"URL": url}
 
-        # 商品名
-        h1 = soup.find('h1')
-        data["商品名"] = h1.get_text(strip=True) if h1 else ""
-
         # ブランド名
-        brand_el = soup.select_one('.brand-name, [class*="brand"]')
+        brand_el = soup.select_one('.item-detail-info__name-brand')
         if brand_el:
-            data["ブランド"] = brand_el.get_text(strip=True)
+            brand_text = brand_el.get_text(strip=True).split('\n')[0].strip()
+            data["ブランド"] = brand_text
+
+        # カテゴリ
+        cat_el = soup.select_one('.item-detail-info__category-list')
+        if cat_el:
+            data["カテゴリ"] = cat_el.get_text(strip=True).replace('\n', '').replace(' ', '')
 
         # 価格
-        price_el = soup.select_one('[class*="price"], .price')
+        price_el = soup.select_one('.item-detail-info__price')
         if price_el:
-            price_text = price_el.get_text()
-            match = re.search(r'[￥¥]?([\d,]+)', price_text)
+            price_text = price_el.get_text(strip=True).replace(',', '')
+            match = re.search(r'(\d+)', price_text)
             if match:
-                data["価格"] = int(match.group(1).replace(',', ''))
+                data["価格"] = int(match.group(1))
 
-        # 詳細テーブルから情報取得
-        rows = soup.select('tr, dl, .spec-item')
-        for row in rows:
-            th = row.find(['th', 'dt'])
-            td = row.find(['td', 'dd'])
-            if th and td:
-                key = th.get_text(strip=True)
-                val = td.get_text(strip=True).split('\n')[0].strip()
+        # カラー
+        color_el = soup.select_one('.item-detail-info__sku-color-name')
+        if color_el:
+            data["カラー"] = color_el.get_text(strip=True)
 
-                if 'サイズ' in key:
-                    data["サイズ"] = val
-                elif 'カラー' in key or '色' in key:
-                    data["カラー"] = val
-                elif '素材' in key:
-                    data["素材"] = val
-                elif 'コンディション' in key or '状態' in key:
-                    data["ランク"] = val
-                elif '品番' in key or '型番' in key:
-                    data["品番"] = val
+        # コンディション・サイズ（正規表現でテキストから抽出）
+        page_text = soup.get_text()
+
+        cond_match = re.search(r'コンディション\s*[:：]\s*(\w+)', page_text)
+        if cond_match:
+            data["ランク"] = cond_match.group(1)
+
+        size_match = re.search(r'サイズ\s*[:：]\s*([^\s]+)', page_text)
+        if size_match:
+            data["サイズ"] = size_match.group(1)
+
+        # 品番（metaタグのdescriptionから抽出）
+        meta_desc = soup.select_one('meta[name="description"]')
+        if meta_desc:
+            desc_content = meta_desc.get('content', '')
+            # 品番パターン（英数字5文字以上）
+            numbers = re.findall(r'[A-Z0-9]{5,}', desc_content)
+            if numbers:
+                data["品番"] = numbers[0]
 
         return data
 
@@ -510,7 +516,7 @@ with st.sidebar:
         st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe, louisvuitton")
         categories = KOMEHYO_CATEGORIES
     else:
-        st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe, louis-vuitton")
+        st.caption("📝 例: FENDI, GUCCI, PRADA, CHANEL, HERMES, CELINE, LOEWE（大文字推奨）")
         categories = RAGTAG_CATEGORIES
 
     category_name = st.selectbox(
@@ -520,7 +526,10 @@ with st.sidebar:
     )
     category = categories[category_name]
 
-    max_pages = st.slider("取得ページ数", 1, 30, 10, help="1ページ約50件")
+    if selected_ec == "コメ兵":
+        max_pages = st.slider("取得ページ数", 1, 30, 10, help="1ページ約50件")
+    else:
+        max_pages = st.slider("取得ページ数", 1, 10, 5, help="1ページ約100件")
 
     st.divider()
 
@@ -649,14 +658,16 @@ with st.expander("📖 使い方"):
     ### ブランド名の書き方
     | ブランド | コメ兵 | RAGTAG |
     |----------|--------|--------|
-    | フェンディ | `fendi` | `fendi` |
-    | グッチ | `gucci` | `gucci` |
-    | ルイヴィトン | `louisvuitton` | `louis-vuitton` |
-    | シャネル | `chanel` | `chanel` |
-    | エルメス | `hermes` | `hermes` |
-    | プラダ | `prada` | `prada` |
-    | セリーヌ | `celine` | `celine` |
-    | ロエベ | `loewe` | `loewe` |
+    | フェンディ | `fendi` | `FENDI` |
+    | グッチ | `gucci` | `GUCCI` |
+    | ルイヴィトン | `louisvuitton` | `LOUISVUITTON` |
+    | シャネル | `chanel` | `CHANEL` |
+    | エルメス | `hermes` | `HERMES` |
+    | プラダ | `prada` | `PRADA` |
+    | セリーヌ | `celine` | `CELINE` |
+    | ロエベ | `loewe` | `LOEWE` |
+
+    ※RAGTAGは自動で大文字変換されます
     """)
 
 st.divider()
