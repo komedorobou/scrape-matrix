@@ -463,14 +463,37 @@ def ragtag_get_product_detail(url):
         if size_match:
             data["サイズ"] = size_match.group(1)
 
-        # 品番（metaタグのdescriptionから抽出）
-        meta_desc = soup.select_one('meta[name="description"]')
-        if meta_desc:
-            desc_content = meta_desc.get('content', '')
-            # 品番パターン（英数字5文字以上）
-            numbers = re.findall(r'[A-Z0-9]{5,}', desc_content)
-            if numbers:
-                data["品番"] = numbers[0]
+        # 商品名（商品詳細セクションから取得）
+        # 「バイザウェイ ミニ ハンドバッグ」のような名前
+        detail_section = soup.select_one('.item-detail-spec')
+        if detail_section:
+            # 最初のテキストが商品名の場合が多い
+            first_text = detail_section.get_text(strip=True).split('\n')[0].strip()
+            if first_text and not first_text.startswith('カテゴリ'):
+                data["商品名"] = first_text
+
+        # 商品名が取れなかった場合、metaのog:titleから取得
+        if "商品名" not in data:
+            og_title = soup.select_one('meta[property="og:title"]')
+            if og_title:
+                data["商品名"] = og_title.get('content', '')
+
+        # 品番（商品詳細ページから直接取得を試みる）
+        # 8BL135 のような形式
+        for text in soup.stripped_strings:
+            # 品番パターン: 数字とアルファベットの組み合わせ（5-10文字）
+            if re.match(r'^[A-Z0-9]{5,10}$', text) and not text.isdigit():
+                data["品番"] = text
+                break
+
+        # 品番が取れなかった場合、metaタグのdescriptionから抽出
+        if "品番" not in data:
+            meta_desc = soup.select_one('meta[name="description"]')
+            if meta_desc:
+                desc_content = meta_desc.get('content', '')
+                numbers = re.findall(r'[A-Z0-9]{5,}', desc_content)
+                if numbers:
+                    data["品番"] = numbers[0]
 
         return data
 
@@ -594,7 +617,7 @@ if scrape_button:
             if results:
                 df = pd.DataFrame(results)
 
-                columns = ["ブランド", "商品名", "品番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "URL"]
+                columns = ["ブランド", "商品名", "カテゴリ", "品番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "URL"]
                 df = df[[c for c in columns if c in df.columns]]
 
                 # session_stateに保存
