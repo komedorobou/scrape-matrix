@@ -7,6 +7,7 @@ import re
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ページ設定
 st.set_page_config(
@@ -501,6 +502,27 @@ def ragtag_get_product_detail(url):
         return None
 
 
+def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None):
+    """並列処理で商品詳細を取得"""
+    results = []
+    total = len(urls)
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(get_detail_func, url): url for url in urls}
+
+        for future in as_completed(futures):
+            data = future.result()
+            if data:
+                results.append(data)
+
+            completed += 1
+            if progress_callback:
+                progress_callback(completed, total)
+
+    return results
+
+
 def to_excel(df):
     """DataFrameをExcelバイナリに変換"""
     output = BytesIO()
@@ -598,18 +620,29 @@ if scrape_button:
         else:
             st.info(f"📦 {len(product_urls)}件の商品を発見")
 
-            results = []
-            total = len(product_urls)
+            # RAGTAG は並列処理、コメ兵は順次処理
+            if selected_ec == "RAGTAG":
+                status_text.text("🚀 並列処理で詳細取得中...")
 
-            for i, url in enumerate(product_urls):
-                status_text.text(f"🔄 [{i+1}/{total}] 商品詳細を取得中...")
-                progress_bar.progress((i + 1) / total)
+                def update_progress(completed, total):
+                    progress_bar.progress(completed / total)
+                    status_text.text(f"🚀 [{completed}/{total}] 並列取得中...")
 
-                data = get_detail_func(url)
-                if data:
-                    results.append(data)
+                results = get_products_parallel(product_urls, get_detail_func, max_workers=10, progress_callback=update_progress)
+            else:
+                # コメ兵は順次処理（サーバー負荷考慮）
+                results = []
+                total = len(product_urls)
 
-                time.sleep(random.uniform(0.3, 0.7))
+                for i, url in enumerate(product_urls):
+                    status_text.text(f"🔄 [{i+1}/{total}] 商品詳細を取得中...")
+                    progress_bar.progress((i + 1) / total)
+
+                    data = get_detail_func(url)
+                    if data:
+                        results.append(data)
+
+                    time.sleep(random.uniform(0.3, 0.7))
 
             status_text.text("✅ 完了！")
             progress_bar.progress(1.0)
