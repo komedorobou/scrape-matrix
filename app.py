@@ -16,125 +16,124 @@ st.set_page_config(
     layout="wide"
 )
 
-# カスタムCSS（ToDoアプリ風デザイン）
+# カスタムCSS（淡いパステルカラー）
 st.markdown("""
 <style>
-    /* メイン背景グラデーション（緑→青→紫） */
+    /* メイン背景グラデーション（淡い緑→青→紫） */
     .stApp {
-        background: linear-gradient(135deg, #2d5a4a 0%, #3a6b7c 25%, #4a5a8c 50%, #5a4a7c 75%, #6a4a6c 100%);
+        background: linear-gradient(135deg, #7ab8a8 0%, #8ac8d8 25%, #9ab8d8 50%, #b8a8c8 75%, #c8a8b8 100%);
     }
 
     /* サイドバー */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #2a4a3a 0%, #3a5a6c 100%);
+        background: linear-gradient(180deg, #6aa898 0%, #8ab8c8 100%);
     }
     [data-testid="stSidebar"] * {
-        color: #e0e8e4 !important;
+        color: #2a3a3a !important;
     }
 
     /* メインコンテンツエリア */
     .main .block-container {
-        background: rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.25);
         border-radius: 20px;
         padding: 2rem;
         backdrop-filter: blur(10px);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     }
 
     /* タイトル */
     h1 {
-        color: #e8f0ec !important;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        color: #3a4a4a !important;
+        text-shadow: 1px 1px 2px rgba(255,255,255,0.5);
         font-family: "BIZ UDGothic", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif !important;
     }
 
     /* サブテキスト */
     .stMarkdown, p, span, label {
-        color: #d0e0d8 !important;
+        color: #4a5a5a !important;
     }
 
     /* 入力フィールド */
     .stTextInput > div > div > input {
-        background: rgba(255, 255, 255, 0.15) !important;
-        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        background: rgba(255, 255, 255, 0.5) !important;
+        border: 1px solid rgba(100, 150, 150, 0.3) !important;
         border-radius: 12px !important;
-        color: #ffffff !important;
+        color: #3a4a4a !important;
         font-size: 16px !important;
     }
     .stTextInput > div > div > input::placeholder {
-        color: rgba(255, 255, 255, 0.5) !important;
+        color: rgba(60, 80, 80, 0.5) !important;
     }
     .stTextInput > div > div > input:focus {
-        border-color: #5a9aa8 !important;
-        box-shadow: 0 0 10px rgba(90, 154, 168, 0.5) !important;
+        border-color: #8ac8d8 !important;
+        box-shadow: 0 0 10px rgba(138, 200, 216, 0.5) !important;
     }
 
     /* セレクトボックス */
     .stSelectbox > div > div {
-        background: rgba(255, 255, 255, 0.15) !important;
-        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        background: rgba(255, 255, 255, 0.5) !important;
+        border: 1px solid rgba(100, 150, 150, 0.3) !important;
         border-radius: 12px !important;
     }
     .stSelectbox > div > div > div {
-        color: #ffffff !important;
+        color: #3a4a4a !important;
     }
 
     /* スライダー */
     .stSlider > div > div > div > div {
-        background: #5a9aa8 !important;
+        background: #8ac8d8 !important;
     }
 
     /* ボタン */
     .stButton > button {
-        background: linear-gradient(135deg, #5a9aa8 0%, #4a8a98 100%) !important;
-        color: white !important;
+        background: linear-gradient(135deg, #8ac8d8 0%, #7ab8c8 100%) !important;
+        color: #2a3a3a !important;
         border: none !important;
         border-radius: 12px !important;
         padding: 0.6rem 1.5rem !important;
         font-weight: bold !important;
         font-size: 16px !important;
-        box-shadow: 0 4px 15px rgba(90, 154, 168, 0.4) !important;
+        box-shadow: 0 4px 15px rgba(138, 200, 216, 0.4) !important;
         transition: all 0.3s ease !important;
     }
     .stButton > button:hover {
-        background: linear-gradient(135deg, #6aaab8 0%, #5a9aa8 100%) !important;
+        background: linear-gradient(135deg, #9ad8e8 0%, #8ac8d8 100%) !important;
         transform: translateY(-2px) !important;
-        box-shadow: 0 6px 20px rgba(90, 154, 168, 0.5) !important;
+        box-shadow: 0 6px 20px rgba(138, 200, 216, 0.5) !important;
     }
 
     /* ダウンロードボタン */
     .stDownloadButton > button {
-        background: linear-gradient(135deg, #4a7a6a 0%, #3a6a5a 100%) !important;
-        color: white !important;
+        background: linear-gradient(135deg, #7ab8a8 0%, #6aa898 100%) !important;
+        color: #2a3a3a !important;
         border: none !important;
         border-radius: 12px !important;
         font-weight: bold !important;
-        box-shadow: 0 4px 15px rgba(74, 122, 106, 0.4) !important;
+        box-shadow: 0 4px 15px rgba(122, 184, 168, 0.4) !important;
     }
     .stDownloadButton > button:hover {
-        background: linear-gradient(135deg, #5a8a7a 0%, #4a7a6a 100%) !important;
+        background: linear-gradient(135deg, #8ac8b8 0%, #7ab8a8 100%) !important;
     }
 
     /* プログレスバー */
     .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #5a9aa8 0%, #4a8a98 100%) !important;
+        background: linear-gradient(90deg, #8ac8d8 0%, #7ab8c8 100%) !important;
         border-radius: 10px !important;
     }
 
     /* メトリクス */
     [data-testid="stMetricValue"] {
-        color: #5aeaaa !important;
+        color: #4a9a8a !important;
         font-size: 2rem !important;
         font-weight: bold !important;
-        text-shadow: 0 0 10px rgba(90, 234, 170, 0.3);
     }
     [data-testid="stMetricLabel"] {
-        color: #a0c8b8 !important;
+        color: #5a7a7a !important;
     }
 
     /* データフレーム */
     .stDataFrame {
-        background: rgba(255, 255, 255, 0.1) !important;
+        background: rgba(255, 255, 255, 0.3) !important;
         border-radius: 12px !important;
         overflow: hidden !important;
     }
@@ -144,64 +143,64 @@ st.markdown("""
 
     /* 成功メッセージ */
     .stSuccess {
-        background: rgba(90, 234, 170, 0.2) !important;
-        border-left: 4px solid #5aeaaa !important;
+        background: rgba(122, 200, 168, 0.3) !important;
+        border-left: 4px solid #7ac8a8 !important;
         border-radius: 8px !important;
     }
 
     /* 情報メッセージ */
     .stInfo {
-        background: rgba(90, 154, 168, 0.2) !important;
-        border-left: 4px solid #5a9aa8 !important;
+        background: rgba(138, 200, 216, 0.3) !important;
+        border-left: 4px solid #8ac8d8 !important;
         border-radius: 8px !important;
     }
 
     /* 警告メッセージ */
     .stWarning {
-        background: rgba(234, 180, 90, 0.2) !important;
-        border-left: 4px solid #eab45a !important;
+        background: rgba(232, 200, 140, 0.3) !important;
+        border-left: 4px solid #e8c88c !important;
         border-radius: 8px !important;
     }
 
     /* エラーメッセージ */
     .stError {
-        background: rgba(234, 90, 90, 0.2) !important;
-        border-left: 4px solid #ea5a5a !important;
+        background: rgba(232, 160, 160, 0.3) !important;
+        border-left: 4px solid #e8a0a0 !important;
         border-radius: 8px !important;
     }
 
     /* エクスパンダー */
     .streamlit-expanderHeader {
-        background: rgba(255, 255, 255, 0.1) !important;
+        background: rgba(255, 255, 255, 0.3) !important;
         border-radius: 12px !important;
-        color: #e0e8e4 !important;
+        color: #4a5a5a !important;
     }
 
     /* 区切り線 */
     hr {
-        border-color: rgba(255, 255, 255, 0.2) !important;
+        border-color: rgba(100, 150, 150, 0.3) !important;
     }
 
     /* キャプション */
     .stCaption {
-        color: #a0b8b0 !important;
+        color: #6a8a8a !important;
     }
 
     /* ヘッダー */
     h2, h3 {
-        color: #c0e0d0 !important;
+        color: #4a6a6a !important;
     }
 
     /* divider */
     [data-testid="stMarkdownContainer"] hr {
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent) !important;
+        background: linear-gradient(90deg, transparent, rgba(100,150,150,0.3), transparent) !important;
         border: none !important;
         height: 1px !important;
     }
 
     /* ラジオボタン */
     .stRadio > div {
-        background: rgba(255, 255, 255, 0.05) !important;
+        background: rgba(255, 255, 255, 0.2) !important;
         border-radius: 12px !important;
         padding: 10px !important;
     }
