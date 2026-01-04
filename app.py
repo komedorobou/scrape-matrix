@@ -464,37 +464,31 @@ def ragtag_get_product_detail(url):
         if size_match:
             data["サイズ"] = size_match.group(1)
 
-        # 商品名（商品詳細セクションから取得）
-        # 「バイザウェイ ミニ ハンドバッグ」のような名前
-        detail_section = soup.select_one('.item-detail-spec')
-        if detail_section:
-            # 最初のテキストが商品名の場合が多い
-            first_text = detail_section.get_text(strip=True).split('\n')[0].strip()
-            if first_text and not first_text.startswith('カテゴリ'):
-                data["商品名"] = first_text
+        # 商品名（metaのdescriptionから取得）
+        # 例: "ズッカ柄  <br>ショルダーバッグ" や "バイザウェイ ミニ ハンドバッグ"
+        meta_desc = soup.select_one('meta[name="description"]')
+        if meta_desc:
+            desc_content = meta_desc.get('content', '')
+            # <br>で分割して最初の部分を商品名として使う
+            desc_parts = re.split(r'<br>|<BR>', desc_content)
+            if desc_parts:
+                product_name = desc_parts[0].strip()
+                if product_name and product_name != "FENDI":
+                    data["商品名"] = product_name
 
-        # 商品名が取れなかった場合、metaのog:titleから取得
-        if "商品名" not in data:
-            og_title = soup.select_one('meta[property="og:title"]')
-            if og_title:
-                data["商品名"] = og_title.get('content', '')
-
-        # 品番（商品詳細ページから直接取得を試みる）
-        # 8BL135 のような形式
-        for text in soup.stripped_strings:
-            # 品番パターン: 数字とアルファベットの組み合わせ（5-10文字）
-            if re.match(r'^[A-Z0-9]{5,10}$', text) and not text.isdigit():
-                data["品番"] = text
-                break
-
-        # 品番が取れなかった場合、metaタグのdescriptionから抽出
-        if "品番" not in data:
-            meta_desc = soup.select_one('meta[name="description"]')
-            if meta_desc:
-                desc_content = meta_desc.get('content', '')
-                numbers = re.findall(r'[A-Z0-9]{5,}', desc_content)
-                if numbers:
-                    data["品番"] = numbers[0]
+        # 品番（metaのdescriptionから抽出）
+        # 例: 7VA114, 8BL135 など（数字とアルファベット両方含む5文字以上）
+        if meta_desc:
+            desc_content = meta_desc.get('content', '')
+            # 品番パターン: アルファベットと数字の両方を含む5-10文字
+            candidates = re.findall(r'\b[A-Z0-9]{5,10}\b', desc_content)
+            for candidate in candidates:
+                # FENDIなどブランド名は除外、数字とアルファベット両方含むものを採用
+                has_digit = any(c.isdigit() for c in candidate)
+                has_alpha = any(c.isalpha() for c in candidate)
+                if has_digit and has_alpha and candidate not in ["FENDI", "GUCCI", "PRADA", "CHANEL", "HERMES", "CELINE", "LOEWE"]:
+                    data["品番"] = candidate
+                    break
 
         return data
 
