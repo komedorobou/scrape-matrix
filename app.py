@@ -36,6 +36,28 @@ st.markdown("""
         display: none !important;
     }
 
+    /* ヘッダーバー（上部の暗い部分）を淡く */
+    header[data-testid="stHeader"] {
+        background: linear-gradient(135deg, rgba(200, 220, 230, 0.9), rgba(220, 200, 220, 0.9)) !important;
+        backdrop-filter: blur(10px) !important;
+    }
+    header[data-testid="stHeader"] * {
+        color: #3a5a5a !important;
+    }
+
+    /* ツールバー（右上のメニュー） */
+    [data-testid="stToolbar"] {
+        background: transparent !important;
+    }
+    [data-testid="stToolbar"] button {
+        color: #4a6a6a !important;
+    }
+
+    /* デコレーション（上部のライン）も淡く */
+    [data-testid="stDecoration"] {
+        background: linear-gradient(90deg, #8ac8d8, #c8a8c8, #a8c8b8) !important;
+    }
+
     /* アニメーション定義 */
     @keyframes gradientShift {
         0% { background-position: 0% 50%; }
