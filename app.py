@@ -10,7 +10,7 @@ from io import BytesIO
 
 # ページ設定
 st.set_page_config(
-    page_title="コメ兵スクレイパー",
+    page_title="ブランドECスクレイパー",
     page_icon="👜",
     layout="wide"
 )
@@ -197,15 +197,33 @@ st.markdown("""
         border: none !important;
         height: 1px !important;
     }
+
+    /* ラジオボタン */
+    .stRadio > div {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border-radius: 12px !important;
+        padding: 10px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # 定数
-BASE_URL = "https://komehyo.jp"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
+# EC設定
+EC_SITES = {
+    "コメ兵": {
+        "base_url": "https://komehyo.jp",
+        "icon": "🏪"
+    },
+    "RAGTAG": {
+        "base_url": "https://www.ragtag.jp",
+        "icon": "👔"
+    }
+}
+
 # カテゴリ定義
-CATEGORIES = {
+KOMEHYO_CATEGORIES = {
     "全カテゴリ": "",
     "ブランドバッグ": "brandbag",
     "ブランド財布・小物": "brandwallet-accessories",
@@ -215,6 +233,12 @@ CATEGORIES = {
     "時計メンズ": "watch-mens",
 }
 
+RAGTAG_CATEGORIES = {
+    "全カテゴリ": "",
+    "メンズ": "men",
+    "レディース": "women",
+}
+
 # session_stateの初期化
 if 'results_df' not in st.session_state:
     st.session_state.results_df = None
@@ -222,19 +246,23 @@ if 'brand_name' not in st.session_state:
     st.session_state.brand_name = ""
 if 'scraping_done' not in st.session_state:
     st.session_state.scraping_done = False
+if 'selected_ec' not in st.session_state:
+    st.session_state.selected_ec = "コメ兵"
 
 
-def build_url(brand, category):
-    """検索URLを構築"""
+# ===== コメ兵用関数 =====
+def komehyo_build_url(brand, category):
+    """コメ兵: 検索URLを構築"""
+    base_url = EC_SITES["コメ兵"]["base_url"]
     brand_clean = brand.lower().strip().replace(" ", "")
     if category:
-        return f"{BASE_URL}/{category}/{brand_clean}/"
+        return f"{base_url}/{category}/{brand_clean}/"
     else:
-        return f"{BASE_URL}/{brand_clean}/"
+        return f"{base_url}/{brand_clean}/"
 
 
-def get_product_urls(base_url, max_pages, progress_callback=None):
-    """商品URLを全ページから取得"""
+def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
+    """コメ兵: 商品URLを全ページから取得"""
     urls = []
     page = 1
 
@@ -256,7 +284,7 @@ def get_product_urls(base_url, max_pages, progress_callback=None):
             for a in links:
                 href = a.get('href', '')
                 if '/product/' in href:
-                    full_url = BASE_URL + href if href.startswith('/') else href
+                    full_url = EC_SITES["コメ兵"]["base_url"] + href if href.startswith('/') else href
                     new_urls.append(full_url)
 
             new_urls = list(set(new_urls))
@@ -280,8 +308,8 @@ def get_product_urls(base_url, max_pages, progress_callback=None):
     return urls
 
 
-def get_product_detail(url):
-    """商品詳細を取得"""
+def komehyo_get_product_detail(url):
+    """コメ兵: 商品詳細を取得"""
     try:
         res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
@@ -329,6 +357,121 @@ def get_product_detail(url):
         return None
 
 
+# ===== RAGTAG用関数 =====
+def ragtag_build_url(brand, category):
+    """RAGTAG: 検索URLを構築"""
+    base_url = EC_SITES["RAGTAG"]["base_url"]
+    brand_clean = brand.lower().strip().replace(" ", "-")
+    if category:
+        return f"{base_url}/{category}/brand/{brand_clean}/"
+    else:
+        return f"{base_url}/brand/{brand_clean}/"
+
+
+def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
+    """RAGTAG: 商品URLを全ページから取得"""
+    urls = []
+    page = 1
+
+    while page <= max_pages:
+        url = f"{base_url}?page={page}"
+
+        if progress_callback:
+            progress_callback(f"📄 ページ {page} の商品リストを取得中...")
+
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=30)
+            if res.status_code != 200:
+                break
+
+            soup = BeautifulSoup(res.text, 'html.parser')
+
+            # RAGTAGの商品リンクを取得
+            links = soup.select('a[href*="/item/"]')
+            new_urls = []
+            for a in links:
+                href = a.get('href', '')
+                if '/item/' in href and href not in new_urls:
+                    if href.startswith('/'):
+                        full_url = EC_SITES["RAGTAG"]["base_url"] + href
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        full_url = EC_SITES["RAGTAG"]["base_url"] + '/' + href
+                    new_urls.append(full_url)
+
+            new_urls = list(set(new_urls))
+
+            if not new_urls:
+                break
+
+            before_count = len(urls)
+            urls.extend(new_urls)
+            urls = list(set(urls))
+
+            if len(urls) == before_count:
+                break
+
+            page += 1
+            time.sleep(random.uniform(0.5, 1.0))
+
+        except Exception as e:
+            break
+
+    return urls
+
+
+def ragtag_get_product_detail(url):
+    """RAGTAG: 商品詳細を取得"""
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=30)
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        data = {"URL": url}
+
+        # 商品名
+        h1 = soup.find('h1')
+        data["商品名"] = h1.get_text(strip=True) if h1 else ""
+
+        # ブランド名
+        brand_el = soup.select_one('.brand-name, [class*="brand"]')
+        if brand_el:
+            data["ブランド"] = brand_el.get_text(strip=True)
+
+        # 価格
+        price_el = soup.select_one('[class*="price"], .price')
+        if price_el:
+            price_text = price_el.get_text()
+            match = re.search(r'[￥¥]?([\d,]+)', price_text)
+            if match:
+                data["価格"] = int(match.group(1).replace(',', ''))
+
+        # 詳細テーブルから情報取得
+        rows = soup.select('tr, dl, .spec-item')
+        for row in rows:
+            th = row.find(['th', 'dt'])
+            td = row.find(['td', 'dd'])
+            if th and td:
+                key = th.get_text(strip=True)
+                val = td.get_text(strip=True).split('\n')[0].strip()
+
+                if 'サイズ' in key:
+                    data["サイズ"] = val
+                elif 'カラー' in key or '色' in key:
+                    data["カラー"] = val
+                elif '素材' in key:
+                    data["素材"] = val
+                elif 'コンディション' in key or '状態' in key:
+                    data["ランク"] = val
+                elif '品番' in key or '型番' in key:
+                    data["品番"] = val
+
+        return data
+
+    except Exception as e:
+        return None
+
+
 def to_excel(df):
     """DataFrameをExcelバイナリに変換"""
     output = BytesIO()
@@ -338,11 +481,23 @@ def to_excel(df):
 
 
 # タイトル
-st.title("👜 コメ兵スクレイパー")
-st.caption("ブランドとカテゴリを選んで商品データを取得")
+st.title("👜 ブランドECスクレイパー")
+st.caption("ECサイトとブランドを選んで商品データを取得")
 
 # サイドバー
 with st.sidebar:
+    st.markdown("### 🏬 ECサイト選択")
+
+    selected_ec = st.radio(
+        "スクレイピング先",
+        options=list(EC_SITES.keys()),
+        format_func=lambda x: f"{EC_SITES[x]['icon']} {x}",
+        horizontal=True
+    )
+    st.session_state.selected_ec = selected_ec
+
+    st.divider()
+
     st.markdown("### 🔧 検索条件")
 
     brand_input = st.text_input(
@@ -351,14 +506,19 @@ with st.sidebar:
         help="スペースなしの英語で入力"
     )
 
-    st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe, louisvuitton")
+    if selected_ec == "コメ兵":
+        st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe, louisvuitton")
+        categories = KOMEHYO_CATEGORIES
+    else:
+        st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe, louis-vuitton")
+        categories = RAGTAG_CATEGORIES
 
     category_name = st.selectbox(
         "カテゴリ",
-        options=list(CATEGORIES.keys()),
+        options=list(categories.keys()),
         index=0
     )
-    category = CATEGORIES[category_name]
+    category = categories[category_name]
 
     max_pages = st.slider("取得ページ数", 1, 30, 10, help="1ページ約50件")
 
@@ -383,13 +543,22 @@ if scrape_button:
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        base_url = build_url(brand_input, category)
+        # EC別に処理を分岐
+        if selected_ec == "コメ兵":
+            base_url = komehyo_build_url(brand_input, category)
+            get_urls_func = komehyo_get_product_urls
+            get_detail_func = komehyo_get_product_detail
+        else:
+            base_url = ragtag_build_url(brand_input, category)
+            get_urls_func = ragtag_get_product_urls
+            get_detail_func = ragtag_get_product_detail
+
         status_text.text(f"🔗 URL: {base_url}")
 
         def update_status(msg):
             status_text.text(msg)
 
-        product_urls = get_product_urls(base_url, max_pages, update_status)
+        product_urls = get_urls_func(base_url, max_pages, update_status)
 
         if not product_urls:
             st.error("❌ 商品が見つかりませんでした。ブランド名を確認してください。")
@@ -404,7 +573,7 @@ if scrape_button:
                 status_text.text(f"🔄 [{i+1}/{total}] 商品詳細を取得中...")
                 progress_bar.progress((i + 1) / total)
 
-                data = get_product_detail(url)
+                data = get_detail_func(url)
                 if data:
                     results.append(data)
 
@@ -416,7 +585,7 @@ if scrape_button:
             if results:
                 df = pd.DataFrame(results)
 
-                columns = ["ブランド", "商品名", "品番", "価格", "参考上代", "ランク", "カラー", "素材", "URL"]
+                columns = ["ブランド", "商品名", "品番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "URL"]
                 df = df[[c for c in columns if c in df.columns]]
 
                 # session_stateに保存
@@ -453,14 +622,15 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
 
     # Excel出力
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"komehyo_{st.session_state.brand_name}_{timestamp}.xlsx"
+    ec_name = st.session_state.selected_ec.lower().replace(" ", "")
+    filename = f"{ec_name}_{st.session_state.brand_name}_{timestamp}.xlsx"
 
     excel_data = to_excel(df)
     st.download_button(
         label="📥 Excelダウンロード",
         data=excel_data,
         file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.word",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.xlsx",
         use_container_width=True
     )
 
@@ -469,23 +639,24 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
 with st.expander("📖 使い方"):
     st.markdown("""
     ### 使い方
-    1. **ブランド名を入力**: 英語・スペースなし（例: `fendi`, `louisvuitton`）
-    2. **カテゴリを選択**: 絞り込む場合は選択
-    3. **取得ページ数を設定**: 1ページ約50件
-    4. **「スクレイピング開始」をクリック**
-    5. 完了後「Excelダウンロード」で保存
+    1. **ECサイトを選択**: コメ兵 or RAGTAG
+    2. **ブランド名を入力**: 英語・スペースなし（例: `fendi`, `louisvuitton`）
+    3. **カテゴリを選択**: 絞り込む場合は選択
+    4. **取得ページ数を設定**: 1ページ約50件
+    5. **「スクレイピング開始」をクリック**
+    6. 完了後「Excelダウンロード」で保存
 
     ### ブランド名の書き方
-    | ブランド | 入力 |
-    |----------|------|
-    | フェンディ | `fendi` |
-    | グッチ | `gucci` |
-    | ルイヴィトン | `louisvuitton` |
-    | シャネル | `chanel` |
-    | エルメス | `hermes` |
-    | プラダ | `prada` |
-    | セリーヌ | `celine` |
-    | ロエベ | `loewe` |
+    | ブランド | コメ兵 | RAGTAG |
+    |----------|--------|--------|
+    | フェンディ | `fendi` | `fendi` |
+    | グッチ | `gucci` | `gucci` |
+    | ルイヴィトン | `louisvuitton` | `louis-vuitton` |
+    | シャネル | `chanel` | `chanel` |
+    | エルメス | `hermes` | `hermes` |
+    | プラダ | `prada` | `prada` |
+    | セリーヌ | `celine` | `celine` |
+    | ロエベ | `loewe` | `loewe` |
     """)
 
 st.divider()
