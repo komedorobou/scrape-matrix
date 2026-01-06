@@ -423,6 +423,10 @@ EC_SITES = {
     "RAGTAG": {
         "base_url": "https://www.ragtag.jp",
         "icon": "👔"
+    },
+    "トレファク": {
+        "base_url": "https://www.trefac.jp",
+        "icon": "🏷️"
     }
 }
 
@@ -441,6 +445,12 @@ RAGTAG_CATEGORIES = {
     "全カテゴリ": "",
     "メンズ": "men",
     "レディース": "women",
+}
+
+TREFAC_CATEGORIES = {
+    "全カテゴリ": "",
+    "メンズ": "t1",
+    "レディース": "t2",
 }
 
 # session_stateの初期化
@@ -704,6 +714,132 @@ def ragtag_get_product_detail(url):
         return None
 
 
+# ===== トレファク用関数 =====
+def trefac_build_url(brand, category):
+    """トレファク: 検索URLを構築"""
+    base_url = EC_SITES["トレファク"]["base_url"]
+    brand_clean = brand.strip()
+    return f"{base_url}/store/search_result.html?q={brand_clean}"
+
+
+def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
+    """トレファク: 商品URLを全ページから取得"""
+    urls = []
+    page = 1
+
+    while page <= max_pages:
+        # ページネーション: &page=2, &page=3...
+        url = f"{base_url}&page={page}" if page > 1 else base_url
+
+        if progress_callback:
+            progress_callback(f"📄 ページ {page} の商品リストを取得中...")
+
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=30)
+            if res.status_code != 200:
+                break
+
+            soup = BeautifulSoup(res.text, 'html.parser')
+
+            # トレファクの商品リンク: /store/{数字16桁}/c{数字}/ パターン
+            all_links = soup.find_all('a', href=True)
+            new_urls = []
+            for a in all_links:
+                href = a.get('href', '')
+                if re.search(r'/store/\d{10,}/', href):
+                    if href.startswith('http'):
+                        full_url = href
+                    elif href.startswith('/'):
+                        full_url = EC_SITES["トレファク"]["base_url"] + href
+                    else:
+                        full_url = EC_SITES["トレファク"]["base_url"] + '/' + href
+                    new_urls.append(full_url)
+
+            new_urls = list(set(new_urls))
+
+            if not new_urls:
+                break
+
+            before_count = len(urls)
+            urls.extend(new_urls)
+            urls = list(set(urls))
+
+            if len(urls) == before_count:
+                break
+
+            page += 1
+            time.sleep(random.uniform(0.5, 1.0))
+
+        except Exception as e:
+            break
+
+    return urls
+
+
+def trefac_get_product_detail(url):
+    """トレファク: 商品詳細を取得"""
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=30)
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        data = {"URL": url}
+
+        # 価格
+        price_el = soup.select_one('.gdprice_main')
+        if price_el:
+            price_text = price_el.get_text(strip=True).replace(',', '')
+            match = re.search(r'(\d+)', price_text)
+            if match:
+                data["価格"] = int(match.group(1))
+
+        # 属性テーブルから取得（ブランド、性別、カテゴリ、コンディション、付属品）
+        attr_rows = soup.select('.gddescription_attr_row')
+        for row in attr_rows:
+            head = row.select_one('.gddescription_attr_head')
+            data_el = row.select_one('.gddescription_attr_data')
+            if head and data_el:
+                key = head.get_text(strip=True)
+                val = data_el.get_text(strip=True).replace('\n', ' ')
+
+                if 'ブランド' in key:
+                    data["ブランド"] = val.split()[0] if val else ""
+                elif '性別' in key:
+                    data["性別"] = val
+                elif 'カテゴリ' in key:
+                    data["カテゴリ"] = val.replace('>', ' > ').strip()
+                elif 'コンディション' in key:
+                    # ★★★☆☆☆（やや傷や汚れがあり）→ ★数をカウント
+                    stars = val.count('★')
+                    data["ランク"] = f"★{stars}"
+                elif '付属品' in key:
+                    data["付属品"] = val
+
+        # 詳細テーブルから取得（アイテム名、カラー、素材、製造国）
+        detail_rows = soup.select('.gddescription_detail_row')
+        for row in detail_rows:
+            head = row.select_one('.gddescription_detail_head')
+            data_el = row.select_one('.gddescription_detail_data')
+            if head and data_el:
+                key = head.get_text(strip=True)
+                val = data_el.get_text(strip=True).replace('\n', ' ')[:100]
+
+                if 'アイテム名' in key:
+                    data["商品名"] = val
+                elif 'カラー' in key:
+                    data["カラー"] = val
+                elif '素材' in key:
+                    data["素材"] = val
+                elif '製造国' in key:
+                    data["製造国"] = val
+                elif 'サイズ' in key and 'サイズ' not in data:
+                    data["サイズ"] = val
+
+        return data
+
+    except Exception as e:
+        return None
+
+
 def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None):
     """並列処理で商品詳細を取得"""
     results = []
@@ -762,9 +898,12 @@ with st.sidebar:
     if selected_ec == "コメ兵":
         st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe, louisvuitton")
         categories = KOMEHYO_CATEGORIES
-    else:
+    elif selected_ec == "RAGTAG":
         st.caption("📝 例: FENDI, GUCCI, PRADA, CHANEL, HERMES, CELINE, LOEWE（大文字推奨）")
         categories = RAGTAG_CATEGORIES
+    else:  # トレファク
+        st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe")
+        categories = TREFAC_CATEGORIES
 
     category_name = st.selectbox(
         "カテゴリ",
@@ -775,8 +914,10 @@ with st.sidebar:
 
     if selected_ec == "コメ兵":
         max_pages = st.slider("取得ページ数", 1, 30, 10, help="1ページ約50件")
-    else:
+    elif selected_ec == "RAGTAG":
         max_pages = st.slider("取得ページ数", 1, 10, 5, help="1ページ約100件")
+    else:  # トレファク
+        max_pages = st.slider("取得ページ数", 1, 10, 5, help="1ページ約90件")
 
     st.divider()
 
@@ -804,10 +945,14 @@ if scrape_button:
             base_url = komehyo_build_url(brand_input, category)
             get_urls_func = komehyo_get_product_urls
             get_detail_func = komehyo_get_product_detail
-        else:
+        elif selected_ec == "RAGTAG":
             base_url = ragtag_build_url(brand_input, category)
             get_urls_func = ragtag_get_product_urls
             get_detail_func = ragtag_get_product_detail
+        else:  # トレファク
+            base_url = trefac_build_url(brand_input, category)
+            get_urls_func = trefac_get_product_urls
+            get_detail_func = trefac_get_product_detail
 
         status_text.text(f"🔗 URL: {base_url}")
 
@@ -822,8 +967,8 @@ if scrape_button:
         else:
             st.info(f"📦 {len(product_urls)}件の商品を発見")
 
-            # RAGTAG は並列処理、コメ兵は順次処理
-            if selected_ec == "RAGTAG":
+            # RAGTAG・トレファク は並列処理、コメ兵は順次処理
+            if selected_ec in ["RAGTAG", "トレファク"]:
                 status_text.text("🚀 並列処理で詳細取得中...")
 
                 def update_progress(completed, total):
@@ -852,7 +997,7 @@ if scrape_button:
             if results:
                 df = pd.DataFrame(results)
 
-                columns = ["ブランド", "商品名", "カテゴリ", "品番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "URL"]
+                columns = ["ブランド", "商品名", "カテゴリ", "品番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
                 df = df[[c for c in columns if c in df.columns]]
 
                 # session_stateに保存
@@ -906,24 +1051,24 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
 with st.expander("📖 使い方"):
     st.markdown("""
     ### 使い方
-    1. **ECサイトを選択**: コメ兵 or RAGTAG
+    1. **ECサイトを選択**: コメ兵 / RAGTAG / トレファク
     2. **ブランド名を入力**: 英語・スペースなし（例: `fendi`, `louisvuitton`）
     3. **カテゴリを選択**: 絞り込む場合は選択
-    4. **取得ページ数を設定**: 1ページ約50件
+    4. **取得ページ数を設定**: 1ページ約50〜90件
     5. **「スクレイピング開始」をクリック**
     6. 完了後「Excelダウンロード」で保存
 
     ### ブランド名の書き方
-    | ブランド | コメ兵 | RAGTAG |
-    |----------|--------|--------|
-    | フェンディ | `fendi` | `FENDI` |
-    | グッチ | `gucci` | `GUCCI` |
-    | ルイヴィトン | `louisvuitton` | `LOUISVUITTON` |
-    | シャネル | `chanel` | `CHANEL` |
-    | エルメス | `hermes` | `HERMES` |
-    | プラダ | `prada` | `PRADA` |
-    | セリーヌ | `celine` | `CELINE` |
-    | ロエベ | `loewe` | `LOEWE` |
+    | ブランド | コメ兵 | RAGTAG | トレファク |
+    |----------|--------|--------|------------|
+    | フェンディ | `fendi` | `FENDI` | `fendi` |
+    | グッチ | `gucci` | `GUCCI` | `gucci` |
+    | ルイヴィトン | `louisvuitton` | `LOUISVUITTON` | `louis vuitton` |
+    | シャネル | `chanel` | `CHANEL` | `chanel` |
+    | エルメス | `hermes` | `HERMES` | `hermes` |
+    | プラダ | `prada` | `PRADA` | `prada` |
+    | セリーヌ | `celine` | `CELINE` | `celine` |
+    | ロエベ | `loewe` | `LOEWE` | `loewe` |
 
     ※RAGTAGは自動で大文字変換されます
     """)
