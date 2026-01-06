@@ -784,6 +784,12 @@ def trefac_get_product_detail(url):
 
         data = {"URL": url}
 
+        # 品番（URLから商品IDを抽出）
+        # URL形式: /store/3050004189345460/c3636967/
+        id_match = re.search(r'/store/(\d{10,})/', url)
+        if id_match:
+            data["品番"] = id_match.group(1)
+
         # 価格
         price_el = soup.select_one('.gdprice_main')
         if price_el:
