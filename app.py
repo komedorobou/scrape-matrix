@@ -831,6 +831,8 @@ def trefac_get_product_detail(url):
 
                 if 'アイテム名' in key:
                     data["商品名"] = val
+                elif '型番' in key:
+                    data["型番"] = val
                 elif 'カラー' in key:
                     data["カラー"] = val
                 elif '素材' in key:
@@ -1003,7 +1005,7 @@ if scrape_button:
             if results:
                 df = pd.DataFrame(results)
 
-                columns = ["ブランド", "商品名", "カテゴリ", "品番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                columns = ["ブランド", "商品名", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
                 df = df[[c for c in columns if c in df.columns]]
 
                 # session_stateに保存
