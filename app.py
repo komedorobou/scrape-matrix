@@ -2036,6 +2036,8 @@ if count_button:
                 if info["count"] is not None and info["count"] > 0:
                     total += info["count"]
                     st.success(f"{icon} **{site_name}**: 約 **{info['count']:,}件**")
+                    if debug_msg:
+                        st.caption(f"🔧 {debug_msg}")
                 elif info["count"] == 0:
                     st.error(f"{icon} **{site_name}**: 約 **0件**")
                     if debug_msg:
