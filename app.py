@@ -1256,17 +1256,22 @@ def _parse_secondstreet_count(html, method):
     soup = BeautifulSoup(html, 'html.parser')
     title = soup.select_one('title')
     title_text = title.get_text(strip=True) if title else "(no title)"
-    # 1) __NUXT__ / __INITIAL_STATE__ JSON内の件数を探す
+    # 1) JSON内の件数を探す（最大値を優先）
+    json_counts = {}
     for script in soup.select('script'):
         script_text = script.string or ""
-        # totalCount, total, count などのパターン
-        for key in ['totalCount', 'total', 'itemCount', 'count', 'hit_count', 'hitCount']:
-            m = re.search(rf'"{key}"\s*:\s*(\d+)', script_text)
-            if not m:
-                m = re.search(rf'{key}\s*[:=]\s*(\d+)', script_text)
-            if m and int(m.group(1)) > 0:
-                return int(m.group(1)), f"{method} / json:{key}={m.group(1)} / title={title_text}"
-    # 2) テキスト中の「XX件」パターン — 全て探して最大値を返す（10件表示等のページ内件数を除外）
+        for key in ['totalCount', 'total', 'itemCount', 'hit_count', 'hitCount',
+                     'totalItems', 'total_count', 'numFound', 'nbHits', 'totalHits']:
+            for m in re.finditer(rf'["\']?{key}["\']?\s*[:=]\s*(\d+)', script_text):
+                val = int(m.group(1))
+                if val > json_counts.get(key, 0):
+                    json_counts[key] = val
+    if json_counts:
+        best_key = max(json_counts, key=json_counts.get)
+        best_val = json_counts[best_key]
+        if best_val > 20:
+            return best_val, f"{method} / json:{best_key}={best_val} / title={title_text}"
+    # 2) テキスト中の「XX件」— 全て探して最大値
     text = soup.get_text()
     max_count = 0
     max_match = ""
@@ -1276,15 +1281,37 @@ def _parse_secondstreet_count(html, method):
             if count > max_count:
                 max_count = count
                 max_match = m.group(0)
-    if max_count > 0:
+    if max_count > 20:
         return max_count, f"{method} / text:'{max_match}'(max) / title={title_text}"
-    # 3) 商品カード要素のカウント（複数セレクタ対応）
-    for selector in ['.itemCard', '[class*="itemCard"]', '[class*="item-card"]',
-                     '.item_list li', '.search-result-item', '[class*="product"]']:
-        cards = soup.select(selector)
-        if cards:
-            return len(cards), f"{method} / cards({selector})={len(cards)} / title={title_text}"
-    return 0, f"{method} / HTML={len(html)}文字 / title={title_text} / cards=0 / 件テキストなし"
+    # 3) ページネーションから推定（最終ページ × 1ページの商品数）
+    cards = soup.select('.itemCard')
+    cards_per_page = len(cards) if cards else 0
+    last_page = 1
+    for a in soup.find_all('a', href=True):
+        m = re.search(r'[?&]page=(\d+)', a.get('href', ''))
+        if m:
+            pg = int(m.group(1))
+            if pg > last_page:
+                last_page = pg
+    for el in soup.select('[class*="pager"], [class*="pagin"], [class*="Pager"], nav'):
+        for m in re.finditer(r'\b(\d+)\b', el.get_text()):
+            pg = int(m.group(1))
+            if 1 < pg < 1000 and pg > last_page:
+                last_page = pg
+    if last_page > 1 and cards_per_page > 0:
+        estimated = last_page * cards_per_page
+        return estimated, f"{method} / pagination:{last_page}p×{cards_per_page}cards / title={title_text}"
+    # 4) カード数のみ
+    if cards_per_page > 0:
+        return cards_per_page, f"{method} / cards={cards_per_page}(1p) / title={title_text}"
+    for selector in ['[class*="itemCard"]', '[class*="item-card"]', '.item_list li']:
+        found = soup.select(selector)
+        if found:
+            return len(found), f"{method} / {selector}={len(found)} / title={title_text}"
+    # 5) テキストの件数（小さくても返す）
+    if max_count > 0:
+        return max_count, f"{method} / text:'{max_match}'(small) / title={title_text}"
+    return 0, f"{method} / HTML={len(html)}文字 / title={title_text} / 何も見つからず"
 
 def _check_count_secondstreet(brand, category, scraper_api_key=""):
     """セカスト: 検索結果件数を概算取得（本体と同じフォールバック順）"""
