@@ -10,6 +10,11 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys as _sys
+try:
+    import cloudscraper
+    _scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+except Exception:
+    _scraper = None
 # ページ設定
 st.set_page_config(
     page_title="ブランドECスクレイパー",
@@ -956,7 +961,8 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
         try:
-            res = requests.get(url, headers=HEADERS, timeout=30)
+            http = _scraper if _scraper else requests
+            res = http.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
                 if progress_callback:
                     progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
