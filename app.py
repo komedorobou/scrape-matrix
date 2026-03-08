@@ -24,7 +24,8 @@ except Exception as _e:
 st.set_page_config(
     page_title="ブランドECスクレイパー",
     page_icon="👜",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 # viewportメタタグ（スマホでのズーム・スケール制御）
 st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">', unsafe_allow_html=True)
@@ -52,9 +53,11 @@ st.markdown("""
         white-space: nowrap !important;
         font-size: 0.9rem !important;
     }
-    /* サイドバー開閉ボタンを非表示にして代わりにシンプルに */
-    button[kind="header"] {
-        display: none !important;
+    /* サイドバー開閉ボタン: PCのみ非表示、スマホは表示 */
+    @media (min-width: 769px) {
+        button[kind="header"] {
+            display: none !important;
+        }
     }
     /* ヘッダーバー（上部の暗い部分）を淡く */
     header[data-testid="stHeader"] {
@@ -406,18 +409,23 @@ st.markdown("""
         html {
             -webkit-text-size-adjust: 100%;
         }
-        /* サイドバー: 幅を画面幅に合わせる */
+        /* サイドバー: 全画面幅で開く */
         [data-testid="stSidebar"] {
-            min-width: 85vw !important;
-            width: 85vw !important;
+            min-width: 100vw !important;
+            width: 100vw !important;
+            z-index: 999 !important;
         }
         [data-testid="stSidebar"] > div:first-child {
-            width: 85vw !important;
-            padding: 1rem 1rem !important;
+            width: 100vw !important;
+            padding: 1rem 1.2rem !important;
         }
-        /* サイドバー開閉ボタンをスマホでは表示 */
+        /* サイドバー開閉ボタンを大きく・見やすく */
         button[kind="header"] {
             display: block !important;
+            min-width: 44px !important;
+            min-height: 44px !important;
+            font-size: 1.5rem !important;
+            z-index: 1000 !important;
         }
         /* サイドバーのラジオボタンを1列に */
         [data-testid="stSidebar"] [role="radiogroup"] {
@@ -425,17 +433,23 @@ st.markdown("""
         }
         /* メインコンテンツ: padding/角丸を縮小 */
         .main .block-container {
-            padding: 0.8rem 0.5rem !important;
+            padding: 1rem 0.8rem !important;
             border-radius: 12px !important;
             margin: 0.3rem !important;
+            max-width: 100% !important;
+        }
+        /* 横スクロール防止 */
+        .main, .block-container, .stApp {
+            max-width: 100vw !important;
+            overflow-x: hidden !important;
         }
         /* タイトルを小さく */
         h1 {
-            font-size: 1.4rem !important;
-            letter-spacing: 1px !important;
+            font-size: 1.3rem !important;
+            letter-spacing: 0px !important;
         }
         h2, h3 {
-            font-size: 1.1rem !important;
+            font-size: 1.05rem !important;
         }
         /* メトリクスカードを小さく */
         [data-testid="stMetricValue"] {
@@ -444,77 +458,110 @@ st.markdown("""
         [data-testid="stMetricLabel"] {
             font-size: 0.75rem !important;
         }
-        /* 入力フィールドを調整 */
+        /* 入力フィールド: 16px未満だとiOSでズームされる */
         .stTextInput > div > div > input {
             font-size: 16px !important;
-            padding: 10px 12px !important;
+            padding: 12px 14px !important;
+            border-radius: 10px !important;
         }
-        /* ボタンをタップしやすく */
+        /* ボタンをタップしやすく（44px以上推奨） */
         .stButton > button {
-            padding: 12px 16px !important;
-            font-size: 15px !important;
+            padding: 14px 20px !important;
+            font-size: 16px !important;
             border-radius: 12px !important;
-            min-height: 48px !important;
+            min-height: 50px !important;
+            width: 100% !important;
         }
         .stDownloadButton > button {
-            min-height: 48px !important;
+            min-height: 50px !important;
             border-radius: 12px !important;
+            width: 100% !important;
+        }
+        /* セレクトボックス・マルチセレクト */
+        .stSelectbox > div > div,
+        .stMultiSelect > div > div {
+            min-height: 44px !important;
+            font-size: 16px !important;
+        }
+        /* multiselect のタグを見やすく */
+        .stMultiSelect [data-baseweb="tag"] {
+            font-size: 0.85rem !important;
+            padding: 4px 8px !important;
         }
         /* キャプションを小さく */
         .stCaption, small, .element-container small {
-            font-size: 11px !important;
-            padding: 4px 8px !important;
+            font-size: 12px !important;
+            padding: 6px 10px !important;
         }
         /* データフレームを横スクロールしやすく */
         .stDataFrame {
             border-radius: 8px !important;
         }
         .stDataFrame [data-testid="stDataFrameResizable"] {
-            max-height: 300px !important;
+            max-height: 350px !important;
         }
         /* アラートメッセージのフォント */
         .stSuccess, .stInfo, .stWarning, .stError {
             font-size: 0.85rem !important;
             border-radius: 8px !important;
+            padding: 10px 12px !important;
         }
-        /* ラジオボタン・セレクトボックスのパディング縮小 */
+        /* ラジオボタン */
         .stRadio > div {
             padding: 10px !important;
             border-radius: 10px !important;
         }
         .stRadio > div > div > label {
-            font-size: 14px !important;
-            padding: 6px 8px !important;
+            font-size: 15px !important;
+            padding: 8px 10px !important;
+            min-height: 44px !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        /* スライダー: つまみを大きく */
+        .stSlider [role="slider"] {
+            width: 24px !important;
+            height: 24px !important;
         }
         /* エクスパンダー */
         .streamlit-expanderHeader {
             font-size: 0.9rem !important;
             border-radius: 8px !important;
+            min-height: 44px !important;
         }
         /* ディバイダー余白縮小 */
         hr {
             margin: 0.8rem 0 !important;
         }
-        /* multiselect のタグを見やすく */
-        .stMultiSelect [data-baseweb="tag"] {
-            font-size: 0.8rem !important;
+        /* カラム: スマホでは縦並び */
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 100% !important;
+            min-width: 100% !important;
+        }
+        /* チェックボックスをタップしやすく */
+        .stCheckbox label {
+            min-height: 44px !important;
+            display: flex !important;
+            align-items: center !important;
+            font-size: 15px !important;
         }
     }
     /* ===== 超小型スマホ（400px以下） ===== */
     @media (max-width: 400px) {
         h1 {
-            font-size: 1.2rem !important;
+            font-size: 1.1rem !important;
         }
         .main .block-container {
-            padding: 0.5rem 0.3rem !important;
+            padding: 0.5rem 0.5rem !important;
             border-radius: 8px !important;
         }
         [data-testid="stMetricValue"] {
             font-size: 1.1rem !important;
         }
         .stButton > button {
-            font-size: 14px !important;
-            padding: 10px 12px !important;
+            font-size: 15px !important;
+            padding: 12px 14px !important;
         }
     }
 </style>
