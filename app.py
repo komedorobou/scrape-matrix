@@ -15,6 +15,31 @@ try:
     _scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
 except Exception:
     _scraper = None
+# curl_cffi（ブラウザTLS指紋を再現してCloudflare突破）
+_curl_session = None
+def _get_curl_session():
+    """curl_cffi のセッションを取得"""
+    global _curl_session
+    if _curl_session is not None:
+        return _curl_session
+    try:
+        from curl_cffi.requests import Session
+        _curl_session = Session(impersonate="chrome131")
+        return _curl_session
+    except Exception:
+        return None
+def _fetch_with_curl(url, timeout=30):
+    """curl_cffiでページを取得。成功時は(html, status_code)、失敗時はNone"""
+    s = _get_curl_session()
+    if s is None:
+        return None
+    try:
+        res = s.get(url, timeout=timeout)
+        if res.status_code == 200:
+            return res.text
+        return None
+    except Exception:
+        return None
 # undetected-chromedriver（ローカルChrome用）
 _uc_driver = None
 def _get_uc_driver():
@@ -1020,11 +1045,16 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         try:
             html = None
             method = ""
-            # 1) Chrome（undetected-chromedriver）
+            # 1) Chrome（undetected-chromedriver）- ローカル最強
             html = _fetch_with_chrome(url)
             if html:
                 method = "Chrome"
-            # 2) cloudscraper
+            # 2) curl_cffi（TLS指紋偽装）- Streamlit Cloud向け
+            if not html:
+                html = _fetch_with_curl(url)
+                if html:
+                    method = "curl_cffi"
+            # 3) cloudscraper
             if not html and _scraper:
                 try:
                     res = _scraper.get(url, headers=HEADERS, timeout=30)
@@ -1033,7 +1063,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                         method = "cloudscraper"
                 except Exception:
                     pass
-            # 3) requests Session（Cookie保持で403回避）
+            # 4) requests Session（Cookie保持で403回避）
             if not html:
                 ss = _get_secondstreet_session()
                 res = ss.get(url, timeout=30)
