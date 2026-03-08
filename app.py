@@ -1266,14 +1266,18 @@ def _parse_secondstreet_count(html, method):
                 m = re.search(rf'{key}\s*[:=]\s*(\d+)', script_text)
             if m and int(m.group(1)) > 0:
                 return int(m.group(1)), f"{method} / json:{key}={m.group(1)} / title={title_text}"
-    # 2) テキスト中の「XX件」パターン（様々な形式）
+    # 2) テキスト中の「XX件」パターン — 全て探して最大値を返す（10件表示等のページ内件数を除外）
     text = soup.get_text()
+    max_count = 0
+    max_match = ""
     for pat in [r'([\d,]+)\s*件', r'全\s*([\d,]+)', r'(\d+)\s*(?:items|results|products)']:
-        m = re.search(pat, text)
-        if m:
+        for m in re.finditer(pat, text):
             count = int(m.group(1).replace(',', ''))
-            if count > 0:
-                return count, f"{method} / text:'{m.group(0)}' / title={title_text}"
+            if count > max_count:
+                max_count = count
+                max_match = m.group(0)
+    if max_count > 0:
+        return max_count, f"{method} / text:'{max_match}'(max) / title={title_text}"
     # 3) 商品カード要素のカウント（複数セレクタ対応）
     for selector in ['.itemCard', '[class*="itemCard"]', '[class*="item-card"]',
                      '.item_list li', '.search-result-item', '[class*="product"]']:
