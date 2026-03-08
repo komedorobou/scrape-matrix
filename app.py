@@ -1183,6 +1183,121 @@ def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callba
             if progress_callback:
                 progress_callback(completed, total)
     return results
+# ===== 件数チェック（1ページ目だけ取得して概算） =====
+def _check_count_komehyo(brand, category):
+    """コメ兵: 検索結果件数を概算取得"""
+    url = komehyo_build_url(brand, category)
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        if res.status_code != 200:
+            return None, url
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # 件数テキストを探す（例: "123件"）
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        # フォールバック: 商品リンク数をカウント
+        links = soup.select('a[href*="/product/"]')
+        count = len(set(a.get('href', '') for a in links))
+        return (count, url) if count else (0, url)
+    except Exception:
+        return None, url
+
+def _check_count_ragtag(brand, category):
+    """RAGTAG: 検索結果件数を概算取得"""
+    url = ragtag_build_url(brand, category)
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        if res.status_code != 200:
+            return None, url
+        soup = BeautifulSoup(res.text, 'html.parser')
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        links = [a for a in soup.find_all('a', href=True) if '/item/' in a.get('href', '')]
+        count = len(set(a.get('href', '') for a in links))
+        return (count, url) if count else (0, url)
+    except Exception:
+        return None, url
+
+def _check_count_trefac(brand, category):
+    """トレファク: 検索結果件数を概算取得"""
+    url = trefac_build_url(brand, category)
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        if res.status_code != 200:
+            return None, url
+        soup = BeautifulSoup(res.text, 'html.parser')
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        links = [a for a in soup.find_all('a', href=True) if re.search(r'/store/\d{10,}/', a.get('href', ''))]
+        count = len(set(a.get('href', '') for a in links))
+        return (count, url) if count else (0, url)
+    except Exception:
+        return None, url
+
+def _check_count_secondstreet(brand, category):
+    """セカスト: 検索結果件数を概算取得"""
+    url = secondstreet_build_url(brand, category)
+    try:
+        html = None
+        scraper_api_key = st.session_state.get("scraper_api_key", "")
+        if scraper_api_key:
+            try:
+                api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
+                res = requests.get(api_url, timeout=30)
+                if res.status_code == 200:
+                    html = res.text
+            except Exception:
+                pass
+        if not html:
+            html = _fetch_with_curl(url)
+        if not html and _scraper:
+            try:
+                res = _scraper.get(url, headers=HEADERS, timeout=15)
+                if res.status_code == 200:
+                    html = res.text
+            except Exception:
+                pass
+        if not html:
+            return None, url
+        soup = BeautifulSoup(html, 'html.parser')
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        cards = soup.select('.itemCard')
+        return (len(cards), url) if cards else (0, url)
+    except Exception:
+        return None, url
+
+def check_product_counts(brand, category, selected_sites):
+    """選択サイトの商品件数を一括チェック"""
+    checkers = {
+        "コメ兵": _check_count_komehyo,
+        "RAGTAG": _check_count_ragtag,
+        "トレファク": _check_count_trefac,
+        "セカスト": _check_count_secondstreet,
+    }
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {}
+        for site in selected_sites:
+            if site in checkers:
+                futures[executor.submit(checkers[site], brand, category)] = site
+        for future in as_completed(futures):
+            site = futures[future]
+            try:
+                count, url = future.result()
+                results[site] = {"count": count, "url": url}
+            except Exception:
+                results[site] = {"count": None, "url": ""}
+    return results
+
 def to_excel(df):
     """DataFrameをExcelバイナリに変換（サイト列がある場合はシート分割）"""
     output = BytesIO()
@@ -1784,6 +1899,7 @@ with st.sidebar:
         else:
             st.session_state["scraper_api_key"] = ""
     st.divider()
+    count_button = st.button("📊 件数チェック", use_container_width=True, key="count_check_btn")
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
         if st.button("🗑️ 結果をクリア", use_container_width=True):
@@ -1795,6 +1911,28 @@ with st.sidebar:
             st.session_state.hinban_merged_df = None
             st.session_state.wear_catalog_cache = {}
             st.rerun()
+# 件数チェック処理
+if count_button:
+    if not brand_input:
+        st.warning("⚠️ ブランド名を入力してください")
+    elif not selected_sites:
+        st.warning("⚠️ サイトを1つ以上選択してください")
+    else:
+        with st.spinner("📊 件数を確認中..."):
+            _cat = category if len(selected_sites) == 1 else ""
+            count_results = check_product_counts(brand_input, _cat, selected_sites)
+        total = 0
+        for site_name in selected_sites:
+            if site_name in count_results:
+                info = count_results[site_name]
+                icon = EC_SITES[site_name]["icon"]
+                if info["count"] is not None:
+                    total += info["count"]
+                    st.info(f"{icon} **{site_name}**: 約 **{info['count']:,}件**")
+                else:
+                    st.warning(f"{icon} **{site_name}**: 取得失敗")
+        if total > 0:
+            st.success(f"📦 合計: 約 **{total:,}件**（概算）")
 # メイン処理
 if scrape_button:
     if not brand_input:
