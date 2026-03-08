@@ -1769,10 +1769,15 @@ with st.sidebar:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
     st.divider()
     # ScraperAPI設定（セカスト用・Streamlit Cloud対応）
+    # st.secrets に SCRAPER_API_KEY があれば自動で使う
+    secrets_key = st.secrets.get("SCRAPER_API_KEY", "") if hasattr(st, "secrets") else ""
+    if secrets_key and "scraper_api_key" not in st.session_state:
+        st.session_state["scraper_api_key"] = secrets_key
     with st.expander("🔑 ScraperAPI設定（セカスト用）", expanded=False):
         st.caption("Streamlit Cloudでセカストが403になる場合に使用")
         st.caption("[無料アカウント作成（5000回/月）](https://www.scraperapi.com/signup)")
-        api_key = st.text_input("APIキー", type="password", key="scraper_api_key_input")
+        default_key = st.session_state.get("scraper_api_key", "")
+        api_key = st.text_input("APIキー", value=default_key, type="password", key="scraper_api_key_input")
         if api_key:
             st.session_state["scraper_api_key"] = api_key
             st.success("APIキー設定済み")
