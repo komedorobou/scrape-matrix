@@ -1045,11 +1045,23 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         try:
             html = None
             method = ""
+            # 0) ScraperAPI（APIキーがあれば最優先・確実）
+            scraper_api_key = st.session_state.get("scraper_api_key", "")
+            if not html and scraper_api_key:
+                try:
+                    api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
+                    res = requests.get(api_url, timeout=60)
+                    if res.status_code == 200:
+                        html = res.text
+                        method = "ScraperAPI"
+                except Exception:
+                    pass
             # 1) Chrome（undetected-chromedriver）- ローカル最強
-            html = _fetch_with_chrome(url)
-            if html:
-                method = "Chrome"
-            # 2) curl_cffi（TLS指紋偽装）- Streamlit Cloud向け
+            if not html:
+                html = _fetch_with_chrome(url)
+                if html:
+                    method = "Chrome"
+            # 2) curl_cffi（TLS指紋偽装）
             if not html:
                 html = _fetch_with_curl(url)
                 if html:
@@ -1755,6 +1767,17 @@ with st.sidebar:
                 max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約90件")
         else:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
+    st.divider()
+    # ScraperAPI設定（セカスト用・Streamlit Cloud対応）
+    with st.expander("🔑 ScraperAPI設定（セカスト用）", expanded=False):
+        st.caption("Streamlit Cloudでセカストが403になる場合に使用")
+        st.caption("[無料アカウント作成（5000回/月）](https://www.scraperapi.com/signup)")
+        api_key = st.text_input("APIキー", type="password", key="scraper_api_key_input")
+        if api_key:
+            st.session_state["scraper_api_key"] = api_key
+            st.success("APIキー設定済み")
+        else:
+            st.session_state["scraper_api_key"] = ""
     st.divider()
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
