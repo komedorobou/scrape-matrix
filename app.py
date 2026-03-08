@@ -10,14 +10,6 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys as _sys
-import subprocess as _subprocess
-_UC_IMPORT_ERROR = ""
-try:
-    from playwright.sync_api import sync_playwright
-    UC_AVAILABLE = True
-except Exception as _e:
-    UC_AVAILABLE = False
-    _UC_IMPORT_ERROR = f"{type(_e).__name__}: {_e} | Python: {_sys.executable}"
 # ページ設定
 st.set_page_config(
     page_title="ブランドECスクレイパー",
@@ -919,86 +911,7 @@ def trefac_get_product_detail(url):
     except Exception as e:
         return None
 # ===== セカスト用関数 =====
-_pw_context = None  # {"playwright": ..., "browser": ..., "page": ...}
-_pw_chromium_installed = False
 _secondstreet_cache = {}
-def _ensure_chromium():
-    """Chromiumが未インストールなら1回だけインストール"""
-    global _pw_chromium_installed
-    if _pw_chromium_installed:
-        return
-    try:
-        _subprocess.run(["playwright", "install", "chromium", "--with-deps"],
-                       capture_output=True, timeout=180)
-    except Exception:
-        pass
-    _pw_chromium_installed = True
-def _init_pw_browser():
-    """Playwrightブラウザを初期化"""
-    global _pw_context
-    _close_secondstreet_browser()
-    _ensure_chromium()
-    pw = None
-    browser = None
-    try:
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True, args=[
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-        ])
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 720},
-        )
-        page = context.new_page()
-        _pw_context = {"playwright": pw, "browser": browser, "page": page}
-        return page
-    except Exception:
-        if browser:
-            try: browser.close()
-            except Exception: pass
-        if pw:
-            try: pw.stop()
-            except Exception: pass
-        _pw_context = None
-        raise
-def _get_secondstreet_page(url, wait_selector=None, retry=True):
-    """Playwrightで実Chromiumブラウザを使いページHTMLを取得"""
-    global _pw_context
-    if not UC_AVAILABLE:
-        raise Exception("playwright未インストール: pip install playwright && playwright install chromium")
-    if _pw_context is None:
-        _init_pw_browser()
-    page = _pw_context["page"]
-    try:
-        page.goto(url, timeout=30000)
-    except Exception as e:
-        if retry:
-            _init_pw_browser()
-            return _get_secondstreet_page(url, wait_selector, retry=False)
-        raise
-    if wait_selector:
-        try:
-            page.wait_for_selector(wait_selector, timeout=20000)
-        except Exception:
-            time.sleep(5)
-            if retry:
-                _init_pw_browser()
-                return _get_secondstreet_page(url, wait_selector, retry=False)
-    else:
-        time.sleep(3)
-    return page.content()
-def _close_secondstreet_browser():
-    """Playwrightブラウザを閉じる"""
-    global _pw_context
-    try:
-        if _pw_context:
-            _pw_context["browser"].close()
-            _pw_context["playwright"].stop()
-    except Exception:
-        pass
-    _pw_context = None
 def _parse_secondstreet_name(full_name):
     """商品名文字列を 商品名 / 型番 / 素材 / カラー / 商品番号 に分割"""
     if not full_name:
@@ -1033,7 +946,7 @@ def secondstreet_build_url(brand, category):
     brand_clean = brand.strip()
     return f"{base_url}/search?keyword={brand_clean}"
 def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
-    """セカスト: 検索ページから商品URL+データを一括取得（高速版）"""
+    """セカスト: 検索ページから商品URL+データを一括取得（requestsベース）"""
     global _secondstreet_cache
     _secondstreet_cache = {}
     urls = []
@@ -1043,14 +956,18 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
         try:
-            html = _get_secondstreet_page(url, wait_selector=".itemCard")
-            soup = BeautifulSoup(html, 'html.parser')
+            res = requests.get(url, headers=HEADERS, timeout=30)
+            if res.status_code != 200:
+                if progress_callback:
+                    progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
+                break
+            soup = BeautifulSoup(res.text, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(html)}文字")
+                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(res.text)}文字")
                 break
             new_count = 0
             for card in cards:
@@ -1116,7 +1033,6 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
             if progress_callback:
                 progress_callback(f"⚠ セカスト例外: {type(e).__name__}: {str(e)[:100]}")
             break
-    _close_secondstreet_browser()
     return urls
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
@@ -1720,8 +1636,6 @@ with st.sidebar:
                 max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約90件")
         else:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
-    if "セカスト" in selected_sites and not UC_AVAILABLE:
-        st.error(f"⚠ セカストにはplaywright+Chromiumが必要です。\n\n詳細: {_UC_IMPORT_ERROR}")
     st.divider()
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
@@ -2177,8 +2091,7 @@ with st.expander("📖 使い方"):
     | ロエベ | `loewe` | `LOEWE` | `loewe` | `loewe` |
     ※RAGTAGは自動で大文字変換されます
     ⚠️ **セカスト利用時の注意**:
-    - Playwright + Chromium が必要です（Streamlit Cloudでは自動インストール）
-    - スクレイピング中にヘッドレスブラウザが使用されます
+    - 他のサイトと同様にrequestsベースで動作します
     """)
 st.divider()
 st.caption("⚠️ 利用は自己責任で。robots.txt・利用規約を確認してください。")
