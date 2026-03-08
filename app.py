@@ -1240,13 +1240,12 @@ def _check_count_trefac(brand, category):
     except Exception:
         return None, url
 
-def _check_count_secondstreet(brand, category):
+def _check_count_secondstreet(brand, category, scraper_api_key=""):
     """セカスト: 検索結果件数を概算取得（本体と同じフォールバック順）"""
     url = secondstreet_build_url(brand, category)
     try:
         html = None
         # 0) ScraperAPI（APIキーがあれば最優先）
-        scraper_api_key = st.session_state.get("scraper_api_key", "")
         if scraper_api_key:
             try:
                 api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
@@ -1292,6 +1291,8 @@ def _check_count_secondstreet(brand, category):
 
 def check_product_counts(brand, category, selected_sites):
     """選択サイトの商品件数を一括チェック"""
+    # メインスレッドでst.session_stateから取得（スレッド内ではアクセス不可）
+    scraper_api_key = st.session_state.get("scraper_api_key", "")
     checkers = {
         "コメ兵": _check_count_komehyo,
         "RAGTAG": _check_count_ragtag,
@@ -1303,7 +1304,10 @@ def check_product_counts(brand, category, selected_sites):
         futures = {}
         for site in selected_sites:
             if site in checkers:
-                futures[executor.submit(checkers[site], brand, category)] = site
+                if site == "セカスト":
+                    futures[executor.submit(checkers[site], brand, category, scraper_api_key)] = site
+                else:
+                    futures[executor.submit(checkers[site], brand, category)] = site
         for future in as_completed(futures):
             site = futures[future]
             try:
