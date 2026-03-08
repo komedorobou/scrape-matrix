@@ -587,7 +587,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 # 定数
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+}
+# セカスト用セッション（Cookie保持）
+_secondstreet_session = None
+def _get_secondstreet_session():
+    """セカスト用のHTTPセッションを取得（Cookie付き）"""
+    global _secondstreet_session
+    if _secondstreet_session is not None:
+        return _secondstreet_session
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    # まずトップページにアクセスしてCookieを取得
+    try:
+        s.get("https://www.2ndstreet.jp/", timeout=15)
+    except Exception:
+        pass
+    _secondstreet_session = s
+    return s
 # EC設定
 EC_SITES = {
     "コメ兵": {
@@ -1006,9 +1033,10 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                         method = "cloudscraper"
                 except Exception:
                     pass
-            # 3) requests（最後の手段）
+            # 3) requests Session（Cookie保持で403回避）
             if not html:
-                res = requests.get(url, headers=HEADERS, timeout=30)
+                ss = _get_secondstreet_session()
+                res = ss.get(url, timeout=30)
                 if res.status_code == 200:
                     html = res.text
                     method = "requests"
