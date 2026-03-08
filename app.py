@@ -1245,11 +1245,11 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
     url = secondstreet_build_url(brand, category)
     try:
         html = None
-        # 0) ScraperAPI（APIキーがあれば最優先）
+        # 0) ScraperAPI（APIキーがあれば最優先・render=trueでJS実行）
         if scraper_api_key:
             try:
-                api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
-                res = requests.get(api_url, timeout=30)
+                api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=true"
+                res = requests.get(api_url, timeout=60)
                 if res.status_code == 200:
                     html = res.text
             except Exception:
