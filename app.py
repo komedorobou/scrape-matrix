@@ -23,7 +23,7 @@ st.set_page_config(
     page_title="ブランドECスクレイパー",
     page_icon="👜",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 # viewportメタタグ（スマホでのズーム・スケール制御）
 st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">', unsafe_allow_html=True)
@@ -51,12 +51,7 @@ st.markdown("""
         white-space: nowrap !important;
         font-size: 0.9rem !important;
     }
-    /* サイドバー開閉ボタン: PCのみ非表示、スマホは表示 */
-    @media (min-width: 769px) {
-        button[kind="header"] {
-            display: none !important;
-        }
-    }
+    /* サイドバー開閉ボタン */
     /* ヘッダーバー（上部の暗い部分）を淡く */
     header[data-testid="stHeader"] {
         background: linear-gradient(135deg, rgba(200, 220, 230, 0.9), rgba(220, 200, 220, 0.9)) !important;
