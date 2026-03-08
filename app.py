@@ -9,32 +9,33 @@ import numpy as np
 from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
 import sys as _sys
-
 _UC_IMPORT_ERROR = ""
 try:
-    import undetected_chromedriver as uc
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as WaitEC
+    from playwright.sync_api import sync_playwright
+    import subprocess as _subprocess
+    # Chromiumが未インストールなら自動インストール
+    try:
+        _subprocess.run(["playwright", "install", "chromium"], capture_output=True, timeout=120)
+    except Exception:
+        pass
     UC_AVAILABLE = True
 except Exception as _e:
     UC_AVAILABLE = False
     _UC_IMPORT_ERROR = f"{type(_e).__name__}: {_e} | Python: {_sys.executable}"
-
 # ページ設定
 st.set_page_config(
     page_title="ブランドECスクレイパー",
     page_icon="👜",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
-
+# viewportメタタグ（スマホでのズーム・スケール制御）
+st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">', unsafe_allow_html=True)
 # カスタムCSS（グラスモーフィズム＋アニメーション）
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
-
     /* Material Iconsの文字化け対策 */
     .material-symbols-outlined,
     .material-symbols-rounded,
@@ -44,7 +45,6 @@ st.markdown("""
         visibility: hidden !important;
         display: none !important;
     }
-
     /* サイドバーのラジオボタンを2列グリッドに */
     [data-testid="stSidebar"] [role="radiogroup"] {
         display: grid !important;
@@ -56,12 +56,12 @@ st.markdown("""
         white-space: nowrap !important;
         font-size: 0.9rem !important;
     }
-
-    /* サイドバー開閉ボタンを非表示にして代わりにシンプルに */
-    button[kind="header"] {
-        display: none !important;
+    /* サイドバー開閉ボタン: PCのみ非表示、スマホは表示 */
+    @media (min-width: 769px) {
+        button[kind="header"] {
+            display: none !important;
+        }
     }
-
     /* ヘッダーバー（上部の暗い部分）を淡く */
     header[data-testid="stHeader"] {
         background: linear-gradient(135deg, rgba(200, 220, 230, 0.9), rgba(220, 200, 220, 0.9)) !important;
@@ -70,7 +70,6 @@ st.markdown("""
     header[data-testid="stHeader"] * {
         color: #3a5a5a !important;
     }
-
     /* ツールバー（右上のメニュー） */
     [data-testid="stToolbar"] {
         background: transparent !important;
@@ -78,12 +77,10 @@ st.markdown("""
     [data-testid="stToolbar"] button {
         color: #4a6a6a !important;
     }
-
     /* デコレーション（上部のライン）も淡く */
     [data-testid="stDecoration"] {
         background: linear-gradient(90deg, #8ac8d8, #c8a8c8, #a8c8b8) !important;
     }
-
     /* アニメーション定義 */
     @keyframes gradientShift {
         0% { background-position: 0% 50%; }
@@ -102,14 +99,12 @@ st.markdown("""
         0% { background-position: -200% 0; }
         100% { background-position: 200% 0; }
     }
-
     /* メイン背景（アニメーショングラデーション） */
     .stApp {
         background: linear-gradient(-45deg, #7ab8a8, #8ac8d8, #a8b8d8, #c8a8c8, #d8a8b8, #b8c8a8);
         background-size: 400% 400%;
         animation: gradientShift 15s ease infinite;
     }
-
     /* サイドバー（グラスモーフィズム）- 幅を広げる */
     [data-testid="stSidebar"] {
         background: rgba(255, 255, 255, 0.25) !important;
@@ -125,7 +120,6 @@ st.markdown("""
     [data-testid="stSidebar"] * {
         color: #2a3a3a !important;
     }
-
     /* サイドバーのヘッダー */
     [data-testid="stSidebar"] h3 {
         font-size: 1.3rem !important;
@@ -134,7 +128,6 @@ st.markdown("""
         padding-bottom: 0.5rem !important;
         border-bottom: 2px solid rgba(138, 200, 216, 0.5) !important;
     }
-
     /* メインコンテンツエリア（グラスカード） */
     .main .block-container {
         background: rgba(255, 255, 255, 0.4);
@@ -147,7 +140,6 @@ st.markdown("""
         border: 1px solid rgba(255, 255, 255, 0.3);
         animation: fadeInUp 0.6s ease-out;
     }
-
     /* タイトル */
     h1 {
         color: #2a4a4a !important;
@@ -159,13 +151,11 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         background-clip: text;
     }
-
     /* サブテキスト */
     .stMarkdown, p, span, label {
         color: #3a5a5a !important;
         font-family: 'Noto Sans JP', sans-serif !important;
     }
-
     /* 入力フィールド（グラス風） */
     .stTextInput > div > div > input {
         background: rgba(255, 255, 255, 0.85) !important;
@@ -187,7 +177,6 @@ st.markdown("""
         box-shadow: 0 0 20px rgba(138, 200, 216, 0.5), 0 4px 12px rgba(0, 0, 0, 0.1) !important;
         transform: translateY(-2px);
     }
-
     /* 入力フィールドのラベル */
     .stTextInput label {
         font-size: 15px !important;
@@ -195,7 +184,6 @@ st.markdown("""
         color: #2a4a4a !important;
         margin-bottom: 6px !important;
     }
-
     /* セレクトボックス */
     .stSelectbox > div > div {
         background: rgba(255, 255, 255, 0.85) !important;
@@ -212,13 +200,11 @@ st.markdown("""
         font-weight: 600 !important;
         color: #2a4a4a !important;
     }
-
     /* スライダー */
     .stSlider > div > div > div > div {
         background: linear-gradient(90deg, #8ac8d8, #a8d8e8) !important;
         border-radius: 10px !important;
     }
-
     /* メインボタン（光沢アニメーション） */
     .stButton > button {
         background: linear-gradient(135deg, #8ac8d8 0%, #7ab8c8 50%, #8ac8d8 100%) !important;
@@ -260,7 +246,6 @@ st.markdown("""
     .stButton > button:active {
         transform: translateY(-1px) scale(0.98) !important;
     }
-
     /* ダウンロードボタン */
     .stDownloadButton > button {
         background: linear-gradient(135deg, #7ac8a8 0%, #6ab898 100%) !important;
@@ -276,7 +261,6 @@ st.markdown("""
         transform: translateY(-3px) !important;
         box-shadow: 0 8px 25px rgba(106, 184, 152, 0.5) !important;
     }
-
     /* プログレスバー（光沢） */
     .stProgress > div > div > div > div {
         background: linear-gradient(90deg, #7ab8c8, #8ac8d8, #9ad8e8, #8ac8d8) !important;
@@ -284,7 +268,6 @@ st.markdown("""
         animation: shimmer 2s linear infinite !important;
         border-radius: 10px !important;
     }
-
     /* メトリクスカード */
     [data-testid="stMetricValue"] {
         color: #3a8a7a !important;
@@ -296,7 +279,6 @@ st.markdown("""
         color: #5a7a7a !important;
         font-weight: 500 !important;
     }
-
     /* データフレーム（グラスカード） */
     .stDataFrame {
         background: rgba(255, 255, 255, 0.5) !important;
@@ -305,7 +287,6 @@ st.markdown("""
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
         border: 1px solid rgba(255, 255, 255, 0.6) !important;
     }
-
     /* アラートメッセージ（グラス風） */
     .stSuccess {
         background: rgba(122, 200, 168, 0.25) !important;
@@ -333,7 +314,6 @@ st.markdown("""
         border-left: 4px solid #e89898 !important;
         border-radius: 12px !important;
     }
-
     /* エクスパンダー */
     .streamlit-expanderHeader {
         background: rgba(255, 255, 255, 0.4) !important;
@@ -344,13 +324,11 @@ st.markdown("""
     .streamlit-expanderHeader:hover {
         background: rgba(255, 255, 255, 0.6) !important;
     }
-
     /* ヘッダー */
     h2, h3 {
         color: #3a6a6a !important;
         font-family: 'Noto Sans JP', sans-serif !important;
     }
-
     /* ラジオボタン（カード風） */
     .stRadio > div {
         background: rgba(255, 255, 255, 0.7) !important;
@@ -379,7 +357,6 @@ st.markdown("""
     .stRadio > div > div > label:hover {
         background: rgba(138, 200, 216, 0.2) !important;
     }
-
     /* キャプション（ヘルプテキスト） */
     .stCaption, small, .element-container small {
         font-size: 13px !important;
@@ -390,7 +367,6 @@ st.markdown("""
         display: inline-block !important;
         margin-top: 4px !important;
     }
-
     /* ディバイダー */
     hr {
         border: none !important;
@@ -398,21 +374,18 @@ st.markdown("""
         background: linear-gradient(90deg, transparent, rgba(138, 200, 216, 0.5), transparent) !important;
         margin: 1.5rem 0 !important;
     }
-
     /* スライダーのラベル */
     .stSlider label {
         font-size: 15px !important;
         font-weight: 600 !important;
         color: #2a4a4a !important;
     }
-
     /* スライダーの値表示 */
     .stSlider [data-testid="stTickBarMin"],
     .stSlider [data-testid="stTickBarMax"] {
         font-weight: 600 !important;
         color: #3a5a5a !important;
     }
-
     /* スクロールバー */
     ::-webkit-scrollbar {
         width: 8px;
@@ -429,17 +402,175 @@ st.markdown("""
     ::-webkit-scrollbar-thumb:hover {
         background: rgba(138, 200, 216, 0.7);
     }
-
     /* ヘルプアイコン（？マーク）を非表示 */
     .stTooltipIcon {
         display: none !important;
     }
+    /* ===== モバイル対応（768px以下） ===== */
+    @media (max-width: 768px) {
+        /* viewportメタタグ的な振る舞い */
+        html {
+            -webkit-text-size-adjust: 100%;
+        }
+        /* サイドバー: 全画面幅で開く */
+        [data-testid="stSidebar"] {
+            min-width: 100vw !important;
+            width: 100vw !important;
+            z-index: 999 !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            width: 100vw !important;
+            padding: 1rem 1.2rem !important;
+        }
+        /* サイドバー開閉ボタンを大きく・見やすく */
+        button[kind="header"] {
+            display: block !important;
+            min-width: 44px !important;
+            min-height: 44px !important;
+            font-size: 1.5rem !important;
+            z-index: 1000 !important;
+        }
+        /* サイドバーのラジオボタンを1列に */
+        [data-testid="stSidebar"] [role="radiogroup"] {
+            grid-template-columns: 1fr !important;
+        }
+        /* メインコンテンツ: padding/角丸を縮小 */
+        .main .block-container {
+            padding: 1rem 0.8rem !important;
+            border-radius: 12px !important;
+            margin: 0.3rem !important;
+            max-width: 100% !important;
+        }
+        /* 横スクロール防止 */
+        .main, .block-container, .stApp {
+            max-width: 100vw !important;
+            overflow-x: hidden !important;
+        }
+        /* タイトルを小さく */
+        h1 {
+            font-size: 1.3rem !important;
+            letter-spacing: 0px !important;
+        }
+        h2, h3 {
+            font-size: 1.05rem !important;
+        }
+        /* メトリクスカードを小さく */
+        [data-testid="stMetricValue"] {
+            font-size: 1.3rem !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.75rem !important;
+        }
+        /* 入力フィールド: 16px未満だとiOSでズームされる */
+        .stTextInput > div > div > input {
+            font-size: 16px !important;
+            padding: 12px 14px !important;
+            border-radius: 10px !important;
+        }
+        /* ボタンをタップしやすく（44px以上推奨） */
+        .stButton > button {
+            padding: 14px 20px !important;
+            font-size: 16px !important;
+            border-radius: 12px !important;
+            min-height: 50px !important;
+            width: 100% !important;
+        }
+        .stDownloadButton > button {
+            min-height: 50px !important;
+            border-radius: 12px !important;
+            width: 100% !important;
+        }
+        /* セレクトボックス・マルチセレクト */
+        .stSelectbox > div > div,
+        .stMultiSelect > div > div {
+            min-height: 44px !important;
+            font-size: 16px !important;
+        }
+        /* multiselect のタグを見やすく */
+        .stMultiSelect [data-baseweb="tag"] {
+            font-size: 0.85rem !important;
+            padding: 4px 8px !important;
+        }
+        /* キャプションを小さく */
+        .stCaption, small, .element-container small {
+            font-size: 12px !important;
+            padding: 6px 10px !important;
+        }
+        /* データフレームを横スクロールしやすく */
+        .stDataFrame {
+            border-radius: 8px !important;
+        }
+        .stDataFrame [data-testid="stDataFrameResizable"] {
+            max-height: 350px !important;
+        }
+        /* アラートメッセージのフォント */
+        .stSuccess, .stInfo, .stWarning, .stError {
+            font-size: 0.85rem !important;
+            border-radius: 8px !important;
+            padding: 10px 12px !important;
+        }
+        /* ラジオボタン */
+        .stRadio > div {
+            padding: 10px !important;
+            border-radius: 10px !important;
+        }
+        .stRadio > div > div > label {
+            font-size: 15px !important;
+            padding: 8px 10px !important;
+            min-height: 44px !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        /* スライダー: つまみを大きく */
+        .stSlider [role="slider"] {
+            width: 24px !important;
+            height: 24px !important;
+        }
+        /* エクスパンダー */
+        .streamlit-expanderHeader {
+            font-size: 0.9rem !important;
+            border-radius: 8px !important;
+            min-height: 44px !important;
+        }
+        /* ディバイダー余白縮小 */
+        hr {
+            margin: 0.8rem 0 !important;
+        }
+        /* カラム: スマホでは縦並び */
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 100% !important;
+            min-width: 100% !important;
+        }
+        /* チェックボックスをタップしやすく */
+        .stCheckbox label {
+            min-height: 44px !important;
+            display: flex !important;
+            align-items: center !important;
+            font-size: 15px !important;
+        }
+    }
+    /* ===== 超小型スマホ（400px以下） ===== */
+    @media (max-width: 400px) {
+        h1 {
+            font-size: 1.1rem !important;
+        }
+        .main .block-container {
+            padding: 0.5rem 0.5rem !important;
+            border-radius: 8px !important;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.1rem !important;
+        }
+        .stButton > button {
+            font-size: 15px !important;
+            padding: 12px 14px !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
-
 # 定数
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-
 # EC設定
 EC_SITES = {
     "コメ兵": {
@@ -459,7 +590,6 @@ EC_SITES = {
         "icon": "🔴"
     }
 }
-
 # カテゴリ定義
 KOMEHYO_CATEGORIES = {
     "全カテゴリ": "",
@@ -470,25 +600,21 @@ KOMEHYO_CATEGORIES = {
     "時計レディース": "watch-ladies",
     "時計メンズ": "watch-mens",
 }
-
 RAGTAG_CATEGORIES = {
     "全カテゴリ": "",
     "メンズ": "men",
     "レディース": "women",
 }
-
 TREFAC_CATEGORIES = {
     "全カテゴリ": "",
     "メンズ": "t1",
     "レディース": "t2",
 }
-
 SECONDSTREET_CATEGORIES = {
     "全カテゴリ": "",
     "メンズ": "men",
     "レディース": "women",
 }
-
 # session_stateの初期化
 if 'results_df' not in st.session_state:
     st.session_state.results_df = None
@@ -506,8 +632,6 @@ if 'hinban_merged_df' not in st.session_state:
     st.session_state.hinban_merged_df = None
 if 'wear_catalog_cache' not in st.session_state:
     st.session_state.wear_catalog_cache = {}  # {brand: {brand_no: name}}
-
-
 # ===== コメ兵用関数 =====
 def komehyo_build_url(brand, category):
     """コメ兵: 検索URLを構築"""
@@ -517,26 +641,19 @@ def komehyo_build_url(brand, category):
         return f"{base_url}/{category}/{brand_clean}/"
     else:
         return f"{base_url}/{brand_clean}/"
-
-
 def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
     """コメ兵: 商品URLを全ページから取得"""
     urls = []
     page = 1
-
     while page <= max_pages:
         url = f"{base_url}?page={page}"
-
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
-
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
                 break
-
             soup = BeautifulSoup(res.text, 'html.parser')
-
             links = soup.select('a[href*="/product/"]')
             new_urls = []
             for a in links:
@@ -544,46 +661,33 @@ def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
                 if '/product/' in href:
                     full_url = EC_SITES["コメ兵"]["base_url"] + href if href.startswith('/') else href
                     new_urls.append(full_url)
-
             new_urls = list(set(new_urls))
-
             if not new_urls:
                 break
-
             before_count = len(urls)
             urls.extend(new_urls)
             urls = list(set(urls))
-
             if len(urls) == before_count:
                 break
-
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
-
         except Exception as e:
             break
-
     return urls
-
-
 def komehyo_get_product_detail(url):
     """コメ兵: 商品詳細を取得"""
     try:
         res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
-
         data = {"URL": url}
-
         h1 = soup.find('h1')
         data["商品名"] = h1.get_text(strip=True) if h1 else ""
-
         price_el = soup.select_one('[class*="price"]')
         if price_el:
             price_text = price_el.get_text()
             match = re.search(r'[￥¥]([\d,]+)', price_text)
             if match:
                 data["価格"] = int(match.group(1).replace(',', ''))
-
         rows = soup.select('tr')
         for row in rows:
             th = row.find('th')
@@ -591,7 +695,6 @@ def komehyo_get_product_detail(url):
             if th and td:
                 key = th.get_text(strip=True)
                 val = td.get_text(strip=True).split('\n')[0].strip()
-
                 if key == "品番型式":
                     data["品番"] = val
                 elif key == "アイテム名":
@@ -614,13 +717,9 @@ def komehyo_get_product_detail(url):
                     ref_match = re.search(r'[￥¥]([\d,]+)', val)
                     if ref_match:
                         data["参考上代"] = int(ref_match.group(1).replace(',', ''))
-
         return data
-
     except Exception as e:
         return None
-
-
 # ===== RAGTAG用関数 =====
 def ragtag_build_url(brand, category):
     """RAGTAG: 検索URLを構築"""
@@ -628,27 +727,20 @@ def ragtag_build_url(brand, category):
     # 検索URL形式: https://www.ragtag.jp/search?fr=FENDI
     brand_clean = brand.upper().strip().replace(" ", "")
     return f"{base_url}/search?fr={brand_clean}"
-
-
 def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
     """RAGTAG: 商品URLを全ページから取得"""
     urls = []
     page = 1
-
     while page <= max_pages:
         # ページネーション: &page=2, &page=3...
         url = f"{base_url}&page={page}" if page > 1 else base_url
-
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
-
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
                 break
-
             soup = BeautifulSoup(res.text, 'html.parser')
-
             # RAGTAGの商品リンクを取得（/item/ を含むリンク）
             all_links = soup.find_all('a', href=True)
             new_urls = []
@@ -662,47 +754,34 @@ def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
                     else:
                         full_url = EC_SITES["RAGTAG"]["base_url"] + '/' + href
                     new_urls.append(full_url)
-
             new_urls = list(set(new_urls))
-
             if not new_urls:
                 break
-
             before_count = len(urls)
             urls.extend(new_urls)
             urls = list(set(urls))
-
             if len(urls) == before_count:
                 break
-
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
-
         except Exception as e:
             break
-
     return urls
-
-
 def ragtag_get_product_detail(url):
     """RAGTAG: 商品詳細を取得"""
     try:
         res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
-
         data = {"URL": url}
-
         # ブランド名
         brand_el = soup.select_one('.item-detail-info__name-brand')
         if brand_el:
             brand_text = brand_el.get_text(strip=True).split('\n')[0].strip()
             data["ブランド"] = brand_text
-
         # カテゴリ
         cat_el = soup.select_one('.item-detail-info__category-list')
         if cat_el:
             data["カテゴリ"] = cat_el.get_text(strip=True).replace('\n', '').replace(' ', '')
-
         # 価格
         price_el = soup.select_one('.item-detail-info__price')
         if price_el:
@@ -710,91 +789,64 @@ def ragtag_get_product_detail(url):
             match = re.search(r'(\d+)', price_text)
             if match:
                 data["価格"] = int(match.group(1))
-
         # カラー
         color_el = soup.select_one('.item-detail-info__sku-color-name')
         if color_el:
             data["カラー"] = color_el.get_text(strip=True)
-
         # コンディション・サイズ（正規表現でテキストから抽出）
         page_text = soup.get_text()
-
         cond_match = re.search(r'コンディション\s*[:：]\s*(\w+)', page_text)
         if cond_match:
             data["ランク"] = cond_match.group(1)
-
         size_match = re.search(r'サイズ\s*[:：]\s*([^\s]+)', page_text)
         if size_match:
             data["サイズ"] = size_match.group(1)
-
         # 商品名（metaのdescriptionから取得）
-        # 例: "ズッカ柄  <br>ショルダーバッグ" や "バイザウェイ ミニ ハンドバッグ"
         meta_desc = soup.select_one('meta[name="description"]')
         if meta_desc:
             desc_content = meta_desc.get('content', '')
-            # <br>で分割して商品名を探す
             desc_parts = re.split(r'<br>|<BR>', desc_content)
             for part in desc_parts:
                 part = part.strip()
-                # 適切な長さ（2〜30文字）で、説明文っぽくないものを採用
                 if part and 2 <= len(part) <= 30:
-                    # 除外パターン: ブランド名のみ、「の商品」「公式」「通販」などを含む
                     if not re.search(r'(の商品|公式|通販|買取|販売|サイト|RAGTAG|ラグタグ|送料)', part):
                         if part not in ["FENDI", "GUCCI", "PRADA", "CHANEL", "HERMES", "CELINE", "LOEWE"]:
                             data["商品名"] = part
                             break
-
         # 品番（metaのdescriptionから抽出）
-        # 例: 7VA114, 8BL135 など（数字とアルファベット両方含む5文字以上）
         if meta_desc:
             desc_content = meta_desc.get('content', '')
-            # 品番パターン: アルファベットと数字の両方を含む5-10文字
             candidates = re.findall(r'\b[A-Z0-9]{5,10}\b', desc_content)
             for candidate in candidates:
-                # FENDIなどブランド名は除外、数字とアルファベット両方含むものを採用
                 has_digit = any(c.isdigit() for c in candidate)
                 has_alpha = any(c.isalpha() for c in candidate)
                 if has_digit and has_alpha and candidate not in ["FENDI", "GUCCI", "PRADA", "CHANEL", "HERMES", "CELINE", "LOEWE"]:
                     data["品番"] = candidate
                     break
-
         return data
-
     except Exception as e:
         return None
-
-
 # ===== トレファク用関数 =====
 def trefac_build_url(brand, category):
     """トレファク: 検索URLを構築"""
     base_url = EC_SITES["トレファク"]["base_url"]
     brand_clean = brand.strip()
-    # カテゴリをURLパスに埋め込む: /store/tcpsb/ (全), /store/t1cpsb/ (メンズ), /store/t2cpsb/ (レディース)
     tcpsb = f"{category}cpsb" if category else "tcpsb"
     return f"{base_url}/store/{tcpsb}/?srchword={brand_clean}"
-
-
 def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
     """トレファク: 商品URLを全ページから取得"""
     urls = []
     page = 1
-
     while page <= max_pages:
-        # ページネーション: &key=1, &key=2, &key=3...
         separator = "&" if "?" in base_url else "?"
         url = f"{base_url}{separator}key={page}"
-
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
-
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
                 break
-
             soup = BeautifulSoup(res.text, 'html.parser')
-
-            # トレファクの商品リンク: /store/{数字16桁}/c{数字}/ パターン
             all_links = soup.find_all('a', href=True)
             new_urls = []
             for a in all_links:
@@ -807,36 +859,25 @@ def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
                     else:
                         full_url = EC_SITES["トレファク"]["base_url"] + '/' + href
                     new_urls.append(full_url)
-
             new_urls = list(set(new_urls))
-
             if not new_urls:
                 break
-
             before_count = len(urls)
             urls.extend(new_urls)
             urls = list(set(urls))
-
             if len(urls) == before_count:
                 break
-
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
-
         except Exception as e:
             break
-
     return urls
-
-
 def trefac_get_product_detail(url):
     """トレファク: 商品詳細を取得"""
     try:
         res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
-
         data = {"URL": url}
-
         # 価格
         price_el = soup.select_one('.gdprice_main')
         if price_el:
@@ -844,8 +885,7 @@ def trefac_get_product_detail(url):
             match = re.search(r'(\d+)', price_text)
             if match:
                 data["価格"] = int(match.group(1))
-
-        # 属性テーブルから取得（ブランド、性別、カテゴリ、コンディション、付属品）
+        # 属性テーブルから取得
         attr_rows = soup.select('.gddescription_attr_row')
         for row in attr_rows:
             head = row.select_one('.gddescription_attr_head')
@@ -853,7 +893,6 @@ def trefac_get_product_detail(url):
             if head and data_el:
                 key = head.get_text(strip=True)
                 val = data_el.get_text(strip=True).replace('\n', ' ')
-
                 if 'ブランド' in key:
                     data["ブランド"] = val.split()[0] if val else ""
                 elif '性別' in key:
@@ -861,13 +900,11 @@ def trefac_get_product_detail(url):
                 elif 'カテゴリ' in key:
                     data["カテゴリ"] = val.replace('>', ' > ').strip()
                 elif 'コンディション' in key:
-                    # ★★★☆☆☆（やや傷や汚れがあり）→ ★数をカウント
                     stars = val.count('★')
                     data["ランク"] = f"★{stars}"
                 elif '付属品' in key:
                     data["付属品"] = val
-
-        # 詳細テーブルから取得（アイテム名、カラー、素材、製造国）
+        # 詳細テーブルから取得
         detail_rows = soup.select('.gddescription_detail_row')
         for row in detail_rows:
             head = row.select_one('.gddescription_detail_head')
@@ -875,12 +912,11 @@ def trefac_get_product_detail(url):
             if head and data_el:
                 key = head.get_text(strip=True)
                 val = data_el.get_text(strip=True).replace('\n', ' ')[:100]
-
                 if 'アイテム名' in key:
                     data["商品名"] = val
                 elif '型番' in key:
                     data["型番"] = val
-                    data["品番"] = val  # 品番と統一（型番=品番として扱う）
+                    data["品番"] = val
                 elif 'カラー' in key:
                     data["カラー"] = val
                 elif '素材' in key:
@@ -889,191 +925,138 @@ def trefac_get_product_detail(url):
                     data["製造国"] = val
                 elif 'サイズ' in key and 'サイズ' not in data:
                     data["サイズ"] = val
-
         return data
-
     except Exception as e:
         return None
-
-
 # ===== セカスト用関数 =====
-# undetected-chromedriver でシステムChromeを使いAkamai突破
-# 検索結果ページからデータを直接抽出（詳細ページへのアクセス不要で超高速）
-_uc_driver = None
+_pw_context = None  # {"playwright": ..., "browser": ..., "page": ...}
 _secondstreet_cache = {}
-
-
-def _init_uc_driver():
-    """undetected-chromedriverを初期化"""
-    global _uc_driver
-    if _uc_driver is not None:
-        try:
-            _uc_driver.quit()
-        except Exception:
-            pass
-        _uc_driver = None
-    options = uc.ChromeOptions()
-    options.add_argument("--window-position=-32000,-32000")
-    options.add_argument("--window-size=800,600")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    _uc_driver = uc.Chrome(options=options)
-    return _uc_driver
-
-
+def _init_pw_browser():
+    """Playwrightブラウザを初期化"""
+    global _pw_context
+    _close_secondstreet_browser()
+    pw = sync_playwright().start()
+    browser = pw.chromium.launch(headless=True, args=[
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+    ])
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 720},
+    )
+    page = context.new_page()
+    _pw_context = {"playwright": pw, "browser": browser, "page": page}
+    return page
 def _get_secondstreet_page(url, wait_selector=None, retry=True):
-    """undetected-chromedriverで実Chromeブラウザを使いページHTMLを取得"""
-    global _uc_driver
-
+    """Playwrightで実Chromiumブラウザを使いページHTMLを取得"""
+    global _pw_context
     if not UC_AVAILABLE:
-        raise Exception("undetected-chromedriver未インストール: pip install undetected-chromedriver")
-
-    # ドライバー未起動なら起動（セッション中は使い回す）
-    if _uc_driver is None:
-        _init_uc_driver()
-
+        raise Exception("playwright未インストール: pip install playwright && playwright install chromium")
+    if _pw_context is None:
+        _init_pw_browser()
+    page = _pw_context["page"]
     try:
-        _uc_driver.get(url)
+        page.goto(url, timeout=30000)
     except Exception as e:
-        # ドライバーが死んでたら再起動してリトライ
         if retry:
-            _init_uc_driver()
+            _init_pw_browser()
             return _get_secondstreet_page(url, wait_selector, retry=False)
         raise
-
-    # 要素が出現するまで待機
     if wait_selector:
         try:
-            WebDriverWait(_uc_driver, 20).until(
-                WaitEC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
-            )
+            page.wait_for_selector(wait_selector, timeout=20000)
         except Exception:
-            # セレクタが見つからない場合、ページ読み込み待ち後にリトライ
             time.sleep(5)
             if retry:
-                # ドライバーを再起動してもう一度
-                _init_uc_driver()
+                _init_pw_browser()
                 return _get_secondstreet_page(url, wait_selector, retry=False)
     else:
         time.sleep(3)
-
-    return _uc_driver.page_source
-
-
+    return page.content()
 def _close_secondstreet_browser():
-    """undetected-chromedriverを閉じる"""
-    global _uc_driver
+    """Playwrightブラウザを閉じる"""
+    global _pw_context
     try:
-        if _uc_driver:
-            _uc_driver.quit()
+        if _pw_context:
+            _pw_context["browser"].close()
+            _pw_context["playwright"].stop()
     except Exception:
         pass
-    _uc_driver = None
-
-
+    _pw_context = None
 def _parse_secondstreet_name(full_name):
     """商品名文字列を 商品名 / 型番 / 素材 / カラー / 商品番号 に分割"""
     if not full_name:
         return full_name, "", "", "", ""
-
     parts = [p.strip() for p in full_name.split('/') if p.strip()]
     if not parts:
         return full_name, "", "", "", ""
-
     product_name = parts[0]
     model_parts = []
     material = ""
     color = ""
     product_number = ""
-
     known_materials = {'コットン', 'シルク', 'ポリエステル', 'ナイロン', 'ウール', 'レーヨン',
                        'リネン', 'カシミヤ', 'レザー', 'デニム', 'スエード', 'アクリル', 'キュプラ'}
     known_colors_en = {'BLK', 'WHT', 'GRY', 'BLU', 'RED', 'GRN', 'NVY', 'BRW', 'PNK',
                        'YLW', 'ORG', 'PRP', 'BGE', 'IVR', 'GLD', 'SLV', 'CRM'}
-
     for part in parts[1:]:
         upper = part.upper().strip()
-
-        # 商品番号: 数字のみ（5桁以上）
         if not product_number and re.fullmatch(r'\d{5,}', part):
             product_number = part
-        # 型番: 英字と数字の両方を含む（4文字以上）
         elif re.search(r'[A-Za-z]', part) and re.search(r'\d', part) and len(part) >= 4:
             model_parts.append(part)
-        # 素材
         elif not material and any(m in part for m in known_materials):
             material = part
-        # カラー（英語略称）
         elif not color and upper in known_colors_en:
             color = part
-
     model = " / ".join(model_parts) if model_parts else ""
     return product_name, model, material, color, product_number
-
-
 def secondstreet_build_url(brand, category):
     """セカスト: 検索URLを構築"""
     base_url = EC_SITES["セカスト"]["base_url"]
     brand_clean = brand.strip()
     return f"{base_url}/search?keyword={brand_clean}"
-
-
 def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
     """セカスト: 検索ページから商品URL+データを一括取得（高速版）"""
     global _secondstreet_cache
     _secondstreet_cache = {}
     urls = []
     page = 1
-
     while page <= max_pages:
         url = f"{base_url}&page={page}" if page > 1 else base_url
-
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
-
         try:
             html = _get_secondstreet_page(url, wait_selector=".itemCard")
             soup = BeautifulSoup(html, 'html.parser')
-
             cards = soup.select('.itemCard')
             if not cards:
-                # デバッグ: なぜカードが見つからないか診断
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
                     progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(html)}文字")
                 break
-
             new_count = 0
             for card in cards:
                 link = card.select_one('a.itemCard_inner')
                 if not link:
                     continue
-
                 href = link.get('href', '')
                 if '/goods/detail/goodsId/' not in href:
                     continue
-
                 if href.startswith('http'):
                     product_url = href
                 elif href.startswith('/'):
                     product_url = EC_SITES["セカスト"]["base_url"] + href
                 else:
                     product_url = EC_SITES["セカスト"]["base_url"] + '/' + href
-
                 if product_url in _secondstreet_cache:
                     continue
-
-                # --- カードからデータ抽出 ---
                 data = {"URL": product_url}
-
-                # ブランド
                 brand_el = card.select_one('.itemCard_brand')
                 if brand_el:
                     data["ブランド"] = brand_el.get_text(strip=True)
-
-                # 商品名パース（商品名 / 型番 / 素材 / カラー / 商品番号 を分離）
                 name_el = card.select_one('.itemCard_name')
                 full_name = name_el.get_text(strip=True) if name_el else ""
                 product_name, model, material, color, product_number = _parse_secondstreet_name(full_name)
@@ -1084,20 +1067,15 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                     data["素材"] = material
                 if color:
                     data["カラー"] = color
-                # 品番の統一: 型番(英数混合)があればそれを品番に、なければ商品番号(数字のみ)を品番に
                 if model:
-                    data["品番"] = model.split(" / ")[0]  # 複数あれば最初のを採用
+                    data["品番"] = model.split(" / ")[0]
                 elif product_number:
                     data["品番"] = product_number
-
-                # サイズ
                 size_el = card.select_one('.itemCard_size')
                 if size_el:
                     size_text = size_el.get_text(strip=True).replace('サイズ', '').strip()
                     if size_text and size_text != '--':
                         data["サイズ"] = size_text
-
-                # ランク
                 status_el = card.select_one('.itemCard_status')
                 if status_el:
                     status_text = status_el.get_text(strip=True)
@@ -1106,81 +1084,57 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                         data["ランク"] = f"中古{rank_match.group(1).upper()}"
                     elif '未使用' in status_text:
                         data["ランク"] = "未使用品"
-
-                # 価格
                 price_el = card.select_one('.itemCard_price')
                 if price_el:
                     price_text = price_el.get_text(strip=True).replace('¥', '').replace('￥', '').replace(',', '')
                     price_match = re.search(r'(\d+)', price_text)
                     if price_match:
                         data["価格"] = int(price_match.group(1))
-
                 _secondstreet_cache[product_url] = data
                 urls.append(product_url)
                 new_count += 1
-
             if new_count == 0:
                 break
-
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
-
         except Exception as e:
             if progress_callback:
                 progress_callback(f"⚠ セカスト例外: {type(e).__name__}: {str(e)[:100]}")
             break
-
-    # 検索完了後にブラウザを閉じる
     _close_secondstreet_browser()
     return urls
-
-
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
     return _secondstreet_cache.get(url)
-
-
 def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None):
     """並列処理で商品詳細を取得"""
     results = []
     total = len(urls)
     completed = 0
-
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(get_detail_func, url): url for url in urls}
-
         for future in as_completed(futures):
             data = future.result()
             if data:
                 results.append(data)
-
             completed += 1
             if progress_callback:
                 progress_callback(completed, total)
-
     return results
-
-
 def to_excel(df):
     """DataFrameをExcelバイナリに変換（サイト列がある場合はシート分割）"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         if "サイト" in df.columns:
-            # 全データシート
             df.to_excel(writer, index=False, sheet_name='全サイト')
-            # サイト別シート
             for site_name in df["サイト"].unique():
                 site_df = df[df["サイト"] == site_name].drop(columns=["サイト"])
-                sheet_name = site_name[:31]  # Excel シート名は31文字制限
+                sheet_name = site_name[:31]
                 site_df.to_excel(writer, index=False, sheet_name=sheet_name)
         else:
             df.to_excel(writer, index=False, sheet_name='データ')
     return output.getvalue()
-
-
 # ===== 品番→正式名称取得用関数（v2: ローカル優先 + Web検索補完） =====
-
-# ブランド名→日本語マッピング（全関数で共用）
 _BRAND_JP_MAP = {
     'fendi': 'フェンディ', 'gucci': 'グッチ', 'prada': 'プラダ',
     'chanel': 'シャネル', 'hermes': 'エルメス', 'celine': 'セリーヌ',
@@ -1196,8 +1150,6 @@ _BRAND_JP_MAP = {
     'michaelkors': 'マイケルコース', 'michael kors': 'マイケルコース',
     'todayful': 'トゥデイフル', 'isabelmarant': 'イザベルマラン',
 }
-
-# カテゴリ・バッグタイプなどのノイズワード
 _NOISE_WORDS_JA = [
     'ハンドバッグ', 'ショルダーバッグ', 'トートバッグ', 'ボストンバッグ',
     'クラッチバッグ', 'クロスボディバッグ', 'メッセンジャーバッグ', 'ボディバッグ',
@@ -1213,7 +1165,6 @@ _NOISE_WORDS_JA = [
     'レザー', 'キャンバス', 'ナイロン', 'スエード', 'デニム',
     'コットン', 'シルク', 'ウール', 'カシミヤ',
 ]
-
 _NOISE_WORDS_EN = [
     'Handbag', 'Shoulder Bag', 'Tote Bag', 'Crossbody', 'Clutch',
     'Backpack', 'Wallet', 'Pouch', 'Satchel', 'Boston',
@@ -1225,8 +1176,6 @@ _NOISE_WORDS_EN = [
     'Yellow', 'Orange', 'Purple', 'Ivory', 'Tan',
     'Ladies', 'Womens', "Women's", 'Mens', "Men's",
 ]
-
-
 def _get_brand_variants(brand):
     """ブランド名のバリエーション一覧を取得"""
     brand_lower = brand.lower().strip().replace(" ", "")
@@ -1236,19 +1185,14 @@ def _get_brand_variants(brand):
     if jp_name:
         variants.add(jp_name)
     return variants
-
-
 def _is_valid_hinban(val):
-    """品番として有効かチェック。シーズン名・サイズ表記・素材名などを除外。"""
+    """品番として有効かチェック。"""
     if not val or len(val) < 3:
         return False
-    # 10桁以上の数字のみ → ストアID
     if re.fullmatch(r'\d{10,}', val):
         return False
-    # シーズン名 (24AW, 25SS, 24FW, 23AW etc.)
     if re.fullmatch(r'\d{2}(?:AW|SS|FW|PF|PRE|RE)', val, re.IGNORECASE):
         return False
-    # サイズ表記 (25.5cm, SIZE 36, Mサイズ, FREE SIZE etc.)
     if re.fullmatch(r'\d+\.?\d*\s*cm', val, re.IGNORECASE):
         return False
     if re.fullmatch(r'(?:SIZE|サイズ)\s*\d+', val, re.IGNORECASE):
@@ -1257,21 +1201,15 @@ def _is_valid_hinban(val):
         return False
     if re.fullmatch(r'FREE\s*(?:SIZE)?', val, re.IGNORECASE):
         return False
-    # 素材名 (SV925, K18 etc.)
     if re.fullmatch(r'(?:SV|K|PT)\d+', val, re.IGNORECASE):
         return False
-    # 明らかに品番でない長い文字列（スペース含む英語名等）
     if ' ' in val and len(val) > 20:
         return False
     return True
-
-
 def extract_unique_hinban(df):
-    """スクレイピング結果から有効な品番/型番を抽出・出品数順でソート。
-    出品数が多い品番ほど優先（新しい・需要あるアイテムが先に来る）。"""
+    """スクレイピング結果から有効な品番/型番を抽出・出品数順でソート。"""
     from collections import Counter
     freq = Counter()
-
     if "品番" in df.columns:
         for val in df["品番"].dropna():
             val_str = str(val).strip()
@@ -1285,60 +1223,32 @@ def extract_unique_hinban(df):
                     part = part.strip()
                     if _is_valid_hinban(part):
                         freq[part] += 1
-
-    # 出品数が多い順 → 同数なら品番降順（新しい品番が先）
     return [h for h, _ in sorted(freq.items(), key=lambda x: (-x[1], x[0][::-1]))]
-
-
 def _clean_product_name(name, brand_variants, hinban):
     """商品名からブランド名・ノイズワード・品番を除去して正式名称部分を抽出"""
     cleaned = name.strip()
     if not cleaned:
         return ""
-
-    # ブランド名除去（大文字小文字問わず）
     for bv in sorted(brand_variants, key=len, reverse=True):
         cleaned = re.sub(re.escape(bv), ' ', cleaned, flags=re.IGNORECASE)
-
-    # 品番除去
     if hinban:
         cleaned = re.sub(re.escape(hinban), ' ', cleaned, flags=re.IGNORECASE)
-
-    # 日本語ノイズワード除去
     for nw in _NOISE_WORDS_JA:
         cleaned = cleaned.replace(nw, ' ')
-
-    # 英語ノイズワード除去（単語境界あり）
     for nw in _NOISE_WORDS_EN:
         cleaned = re.sub(r'\b' + re.escape(nw) + r'\b', ' ', cleaned, flags=re.IGNORECASE)
-
-    # シーズン名除去 (24AW, 25SS, 23AW etc.)
     cleaned = re.sub(r'\b\d{2}(?:AW|SS|FW|PF|PRE|RE)\b', ' ', cleaned, flags=re.IGNORECASE)
-
-    # 価格除去
     cleaned = re.sub(r'[￥¥][\d,]+', ' ', cleaned)
     cleaned = re.sub(r'\$[\d,.]+', ' ', cleaned)
     cleaned = re.sub(r'\d+円', ' ', cleaned)
-
-    # 記号除去
     cleaned = re.sub(r'[()（）\[\]【】「」/\\|,、。・\-–—:：;；#＃]+', ' ', cleaned)
     cleaned = re.sub(r'\.{2,}', ' ', cleaned)
-
-    # 数字のみのトークン除去（品番の部分一致対策）
     cleaned = re.sub(r'\b\d+\b', ' ', cleaned)
-
-    # 整理
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-
-    # 短すぎる・数字だけ → 無効
     if len(cleaned) < 2 or re.fullmatch(r'[\d\s]+', cleaned):
         return ""
-
-    # シーズン名のみ → 無効 (24AW, 25SS etc.)
     if re.fullmatch(r'\d{2}(?:AW|SS|FW|PF|PRE|RE)', cleaned, re.IGNORECASE):
         return ""
-
-    # 単体カテゴリ名は正式名称として無効（「コート」「パンツ」等が単独で残るケース）
     _CATEGORY_ONLY = {
         'コート', 'ジャケット', 'パンツ', 'スカート', 'ワンピース', 'ブラウス', 'シャツ',
         'ニット', 'セーター', 'カーディガン', 'ベスト', 'Tシャツ', 'トップス', 'ボトムス',
@@ -1348,9 +1258,7 @@ def _clean_product_name(name, brand_variants, hinban):
         'アウター', 'トレーナー', 'カットソー', 'プルオーバー',
         'ボトム', '長袖シャツ', 'セットアップ', 'ローカット', 'ハイカット',
         'キャミワンピース', 'ノースリーブワンピース',
-        # 素材・特徴 + カテゴリの組み合わせ
         'ニット セーター 薄手', 'カーディガン 薄手',
-        # 複合カテゴリ名（RAGTAGで使われる）
         'ダウンジャケット', 'ダウンコート', 'ロングコート', 'チェスターコート',
         'テーラードジャケット', 'ライダースジャケット', 'ナイロンジャケット',
         'マウンテンパーカー', 'モッズコート', 'ピーコート', 'トレンチコート',
@@ -1362,22 +1270,11 @@ def _clean_product_name(name, brand_variants, hinban):
     }
     if cleaned in _CATEGORY_ONLY:
         return ""
-
     return cleaned
-
-
 def extract_names_from_local_data(df, brand):
-    """Phase 1: スクレイピングデータから品番→正式名称マッピングを作成（Web検索不要・瞬時）
-
-    優先順位:
-    1. 「通称」カラム（コメ兵固有: ピーカブー、バイザウェイ等）→ そのまま採用
-    2. 「商品名」カラム → ノイズ除去して抽出
-    """
+    """Phase 1: スクレイピングデータから品番→正式名称マッピングを作成"""
     from collections import Counter
-
     brand_variants = _get_brand_variants(brand)
-
-    # 品番 → {通称リスト, 商品名リスト} のマッピングを構築
     hinban_to_data = {}
     for _, row in df.iterrows():
         hinbans = []
@@ -1390,17 +1287,12 @@ def extract_names_from_local_data(df, brand):
                 part = part.strip()
                 if part and len(part) >= 3 and not re.fullmatch(r'\d{10,}', part):
                     hinbans.append(part)
-
-        # 通称（コメ兵: "ピーカブー", "バイザウェイ"等）
         tsusho = ""
         if "通称" in df.columns and pd.notna(row.get("通称")):
             tsusho = str(row["通称"]).strip()
-
-        # 商品名
         shohin_name = ""
         if "商品名" in df.columns and pd.notna(row.get("商品名")):
             shohin_name = str(row["商品名"]).strip()
-
         for h in hinbans:
             if h not in hinban_to_data:
                 hinban_to_data[h] = {"通称": [], "商品名": []}
@@ -1408,34 +1300,25 @@ def extract_names_from_local_data(df, brand):
                 hinban_to_data[h]["通称"].append(tsusho)
             if shohin_name:
                 hinban_to_data[h]["商品名"].append(shohin_name)
-
-    # 各品番について正式名称を決定
     results = {}
     for hinban, data in hinban_to_data.items():
-        # 優先1: 通称があればそのまま使用（コメ兵の「ピーカブー」等）
         if data["通称"]:
             counter = Counter(data["通称"])
             best = counter.most_common(1)[0][0]
             results[hinban] = best
             continue
-
-        # 優先2: 商品名からノイズ除去して抽出
         names = data["商品名"]
         if not names:
             results[hinban] = ""
             continue
-
         cleaned_names = []
         for name in names:
             cleaned = _clean_product_name(name, brand_variants, hinban)
             if cleaned:
                 cleaned_names.append(cleaned)
-
         if not cleaned_names:
             results[hinban] = ""
             continue
-
-        # 頻度カウントで最頻出の名前を採用
         normalized_map = {}
         for c in cleaned_names:
             key = c.lower().strip()
@@ -1444,20 +1327,12 @@ def extract_names_from_local_data(df, brand):
         counter = Counter(c.lower().strip() for c in cleaned_names)
         best_key = counter.most_common(1)[0][0]
         best_name = normalized_map[best_key]
-
-        # 60文字制限
         if len(best_name) > 60:
             best_name = best_name[:60].rsplit(' ', 1)[0]
-
         results[hinban] = best_name
-
     return results
-
-
 def _wear_fetch_brand_catalog(brand, progress_callback=None):
-    """WEARからブランドの全商品カタログを取得し、brand_no→名称の辞書を返す。
-    brand_id検索でページネーション → 全件取得 → brand_noでインデックス化。
-    """
+    """WEARからブランドの全商品カタログを取得し、brand_no→名称の辞書を返す。"""
     session = requests.Session()
     api_headers = {
         'User-Agent': HEADERS['User-Agent'],
@@ -1465,8 +1340,6 @@ def _wear_fetch_brand_catalog(brand, progress_callback=None):
         'Origin': 'https://wear.jp',
         'Referer': 'https://wear.jp/',
     }
-
-    # Step 1: ブランドIDを検索
     try:
         res = session.get(
             f"https://api.wear2.jp/connect/v1/brands/search?keyword={requests.utils.quote(brand)}",
@@ -1487,16 +1360,12 @@ def _wear_fetch_brand_catalog(brand, progress_callback=None):
             return {}
     except Exception:
         return {}
-
     if progress_callback:
         progress_callback(0, 0, f"👗 WEAR: {brand.upper()} カタログ取得中（{items_count}件）...")
-
-    # Step 2: 全アイテムをページネーションで取得
-    catalog = {}  # brand_no → name
+    catalog = {}
     page_size = 60
-    max_pages = (items_count // page_size) + 2  # 余裕を持たせる
-    max_pages = min(max_pages, 200)  # 安全上限
-
+    max_pages = (items_count // page_size) + 2
+    max_pages = min(max_pages, 200)
     for page_num in range(1, max_pages + 1):
         try:
             url = f"https://api.wear2.jp/connect/v2/items/search?brand_id={brand_id}&pageno={page_num}&count={page_size}"
@@ -1506,28 +1375,18 @@ def _wear_fetch_brand_catalog(brand, progress_callback=None):
             items = res.json().get('items', [])
             if not items:
                 break
-
             for item in items:
                 bn = str(item.get('brand_no', '')).strip()
                 raw_name = str(item.get('name', '')).strip()
                 if not bn or not raw_name:
                     continue
-
-                # 複合brand_no（"124540001/125241018"）は分割して両方登録
                 bn_keys = [b.strip() for b in bn.split('/') if b.strip()]
-
-                # 名称クリーニング
                 cleaned = re.sub(r'^[\[【][^\]】]*[\]】]\s*', '', raw_name)
-                # 末尾のタグ除去（/秋服, /春服 等）
                 cleaned = re.sub(r'/[春夏秋冬]服$', '', cleaned)
-                # 品番が末尾に付いてたら除去（"ヴィンテージレザーベルト/12191001"）
                 cleaned = re.sub(r'/\d{7,}$', '', cleaned)
-
-                # スラッシュで英語名/日本語名を分割
                 if '/' in cleaned:
                     parts = [p.strip() for p in cleaned.split('/') if p.strip()]
                     if len(parts) >= 2:
-                        # 日本語パートがあればそちらを優先
                         jp_parts = [p for p in parts if not re.fullmatch(r'[A-Za-z0-9\s\-\.\'\",()]+', p)]
                         en_parts = [p for p in parts if re.fullmatch(r'[A-Za-z0-9\s\-\.\'\",()]+', p)]
                         if jp_parts:
@@ -1538,33 +1397,20 @@ def _wear_fetch_brand_catalog(brand, progress_callback=None):
                             cleaned = parts[0]
                     else:
                         cleaned = parts[0]
-
-                # ブランド名プレフィックス除去
                 cleaned = re.sub(r'^TODAYFUL\s*', '', cleaned, flags=re.IGNORECASE).strip()
-
                 if cleaned and len(cleaned) >= 2:
                     for key in bn_keys:
-                        if key not in catalog:  # 最初に見つけたものを優先
+                        if key not in catalog:
                             catalog[key] = cleaned
-
             if progress_callback and page_num % 10 == 0:
                 progress_callback(0, 0, f"👗 WEAR: {len(catalog)}件取得済み（page {page_num}）...")
-
         except Exception:
             continue
-        time.sleep(0.15)  # 軽めのレート制限
-
+        time.sleep(0.15)
     return catalog
-
-
 def _wear_search_batch(hinban_list, brand, progress_callback=None, start_idx=0, total=0):
-    """Phase 2a: WEAR API（api.wear2.jp）で品番の正式名称を取得。
-    ブランド全カタログをbrand_idで取得し、brand_noで品番マッチング。
-    ZOZOTOWN系ブランド（TODAYFUL等）に強い。APIキー不要。"""
-
+    """Phase 2a: WEAR API（api.wear2.jp）で品番の正式名称を取得。"""
     brand_key = brand.lower().strip()
-
-    # session_stateキャッシュチェック
     try:
         cache = st.session_state.get('wear_catalog_cache', {})
         if brand_key in cache:
@@ -1576,40 +1422,28 @@ def _wear_search_batch(hinban_list, brand, progress_callback=None, start_idx=0, 
             if catalog:
                 st.session_state.wear_catalog_cache[brand_key] = catalog
     except Exception:
-        # Streamlit外（テスト等）ではキャッシュなしで実行
         catalog = _wear_fetch_brand_catalog(brand, progress_callback=progress_callback)
-
     if not catalog:
         return {}
-
     if progress_callback:
         progress_callback(start_idx, total, f"👗 WEAR: カタログ{len(catalog)}件から品番マッチング中...")
-
-    # 品番マッチング
     results = {}
     for hinban in hinban_list:
         name = catalog.get(hinban, "")
         if name:
             results[hinban] = name
-
     return results
-
-
 def _web_search_batch(hinban_list, brand, progress_callback=None, start_idx=0, total=0):
     """Phase 2b: Web検索（DDG HTML → Brave）で品番の正式名称を補完"""
     brand_variants = _get_brand_variants(brand)
     results = {}
-
-    # Step 1: DDG HTML (requestsで2-3件ずつ)
     remaining = list(hinban_list)
     ddg_session = requests.Session()
-
     for i, hinban in enumerate(remaining[:]):
         if hinban in results:
             continue
         if progress_callback:
             progress_callback(start_idx + i, total, f"🌐 [{start_idx + i + 1}/{total}] {hinban} をWeb検索中...")
-
         q = f"{brand} {hinban}"
         url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(q)}"
         try:
@@ -1622,27 +1456,22 @@ def _web_search_batch(hinban_list, brand, progress_callback=None, start_idx=0, t
                     if title_el:
                         titles.append(title_el.get_text(strip=True))
                 if titles:
-                    # タイトルから正式名称を抽出
                     name = _extract_name_from_search_titles(titles[:8], hinban, brand_variants)
                     if name:
                         results[hinban] = name
                         remaining.remove(hinban)
             elif res.status_code in (202, 403, 429):
-                break  # Rate limited, stop DDG
+                break
         except Exception:
             break
         time.sleep(random.uniform(2.0, 3.5))
-
     if not remaining:
         return results
-
-    # Step 2: Brave Search (requestsで3件ずつ)
     brave_session = requests.Session()
     for i, hinban in enumerate([h for h in remaining if h not in results]):
         if progress_callback:
             idx = start_idx + len(hinban_list) - len(remaining) + i
             progress_callback(idx, total, f"🌐 [{idx + 1}/{total}] {hinban} をBrave検索中...")
-
         q = f"{brand} {hinban}"
         url = f"https://search.brave.com/search?q={requests.utils.quote(q)}"
         try:
@@ -1657,41 +1486,30 @@ def _web_search_batch(hinban_list, brand, progress_callback=None, start_idx=0, t
                         if hinban in remaining:
                             remaining.remove(hinban)
             elif res.status_code in (403, 429):
-                break  # Rate limited
+                break
         except Exception:
             break
         time.sleep(random.uniform(2.0, 3.0))
-
     return results
-
-
 def _extract_name_from_search_titles(titles, hinban, brand_variants):
     """Web検索タイトル群から正式名称を抽出"""
     from collections import Counter
-
-    # サイト名除去パターン
     site_patterns = [
         r'\s*[\-–—|]\s*(eBay|Grailed|Poshmark|Amazon|Vestiaire|Yoogi.*?Closet|eLADY|Rebag|'
         r'Fashionphile|TheRealReal|Mercari|Depop|StockX|Farfetch|Jomashop|Nordstrom|'
         r'Ssense|Mytheresa|Joli\s*Closet|コメ兵|RAGTAG|ラグタグ|トレファク|'
         r'セカンドストリート|メルカリ|楽天|BUYMA|Yahoo).*$',
     ]
-
     candidates = []
     for title in titles:
         cleaned = title
-        # サイト名除去
         for pat in site_patterns:
             cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE)
-
-        # 汎用ノイズ除去
         cleaned = _clean_product_name(cleaned, brand_variants, hinban)
         if cleaned and len(cleaned) >= 2:
             candidates.append(cleaned)
-
     if not candidates:
         return ""
-
     normalized_map = {}
     for c in candidates:
         key = c.lower().strip()
@@ -1700,26 +1518,14 @@ def _extract_name_from_search_titles(titles, hinban, brand_variants):
     counter = Counter(c.lower().strip() for c in candidates)
     best_key = counter.most_common(1)[0][0]
     best_name = normalized_map[best_key]
-
     if len(best_name) > 60:
         best_name = best_name[:60].rsplit(' ', 1)[0]
-
     return best_name
-
-
 def lookup_official_names(df, brand, max_lookup=50, web_search=True, wear_search=True, progress_callback=None):
-    """品番→正式名称を3フェーズで一括取得
-    優先順位: WEAR（公式カタログ）> ローカル（スクレイピングデータ）> Web検索
-
-    Phase 1: WEAR APIでブランド全カタログ取得 → brand_noマッチ（最も正確）
-    Phase 2: ローカルデータ（商品名）から抽出（瞬時、WEARに無い品番向け）
-    Phase 3: Web検索（DDG/Brave、レート制限あり、最終手段）
-    """
+    """品番→正式名称を3フェーズで一括取得"""
     unique_hinban = extract_unique_hinban(df)
     target = unique_hinban[:max_lookup]
     total = len(target)
-
-    # Phase 1: WEAR APIカタログ（全品番に対して一括マッチ — 最高精度）
     wear_results = {}
     if wear_search:
         if progress_callback:
@@ -1733,20 +1539,14 @@ def lookup_official_names(df, brand, max_lookup=50, web_search=True, wear_search
     wear_count = sum(1 for h in target if wear_results.get(h, ""))
     if progress_callback:
         progress_callback(wear_count, total, f"👗 Phase 1完了: {wear_count}/{total}件をWEARで特定")
-
-    # Phase 2: ローカル抽出（WEARに無い品番を補完）
     if progress_callback:
         progress_callback(wear_count, total, "📊 Phase 2: ローカルデータから正式名称を抽出中...")
     local_results = extract_names_from_local_data(df, brand)
-
     resolved_count = sum(1 for h in target if wear_results.get(h, "") or local_results.get(h, ""))
     if progress_callback:
         progress_callback(resolved_count, total, f"📊 Phase 2完了: {resolved_count}/{total}件を特定")
-
-    # Phase 3: Web検索（まだ未解決の分のみ）
     still_unresolved = [h for h in target if not wear_results.get(h, "") and not local_results.get(h, "")]
     web_results = {}
-
     if web_search and still_unresolved:
         if progress_callback:
             progress_callback(resolved_count, total, f"🌐 Phase 3: 残り{len(still_unresolved)}件をWeb検索中...")
@@ -1756,8 +1556,6 @@ def lookup_official_names(df, brand, max_lookup=50, web_search=True, wear_search
             start_idx=resolved_count,
             total=total,
         )
-
-    # 結果統合（優先順: WEAR > ローカル > Web検索）
     mapping_results = []
     for hinban in target:
         wear_name = wear_results.get(hinban, "")
@@ -1765,71 +1563,46 @@ def lookup_official_names(df, brand, max_lookup=50, web_search=True, wear_search
         web_name = web_results.get(hinban, "")
         final_name = wear_name or local_name or web_name
         source = "WEAR" if wear_name else ("ローカル" if local_name else ("Web検索" if web_name else ""))
-
         mapping_results.append({
             "品番": hinban,
             "正式名称": final_name,
             "ソース": source,
         })
-
     if progress_callback:
         found = sum(1 for r in mapping_results if r["正式名称"])
         progress_callback(total, total, f"✅ 完了！{found}/{total}件の正式名称を特定")
-
     return pd.DataFrame(mapping_results)
-
-
 # ===== KDE価格分析 =====
-
 def _kde_peak_price(prices):
-    """価格リストからKDE（カーネル密度推定）でピーク価格を算出。
-    一番データが集中している価格帯の中心を返す。"""
+    """価格リストからKDE（カーネル密度推定）でピーク価格を算出。"""
     prices = [p for p in prices if p and p > 0]
     if not prices:
         return 0
     if len(prices) == 1:
         return prices[0]
-
     arr = np.array(prices, dtype=float)
     n = len(arr)
-
-    # Silverman's rule でバンド幅を自動決定
     std = arr.std()
     if std == 0:
         return float(np.median(arr))
     iqr = float(np.percentile(arr, 75) - np.percentile(arr, 25))
     bandwidth = 0.9 * min(std, iqr / 1.34 if iqr > 0 else std) * n ** (-0.2)
-    bandwidth = max(bandwidth, 1000)  # 最低1000円幅
-
-    # グリッド上でカーネル密度を評価
+    bandwidth = max(bandwidth, 1000)
     x_min = arr.min() - 3 * bandwidth
     x_max = arr.max() + 3 * bandwidth
     x = np.linspace(x_min, x_max, 500)
-
-    # ガウシアンカーネル
     density = np.zeros_like(x)
     for p in arr:
         density += np.exp(-0.5 * ((x - p) / bandwidth) ** 2)
-
     peak_idx = int(np.argmax(density))
     return round(float(x[peak_idx]))
-
-
 def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
-    """マッピングテーブルにKDE価格分析を追加し、ピーク価格が閾値以下の品番を除外。
-
-    追加カラム: 件数, KDE代表価格, 価格レンジ
-    Returns: (enriched_df, filtered_df)
-        enriched_df: 全件（フィルタ前）
-        filtered_df: ピーク価格 > min_price のみ
-    """
-    # 品番→価格リストの構築
+    """マッピングテーブルにKDE価格分析を追加し、ピーク価格が閾値以下の品番を除外。"""
     hinban_prices = {}
     for _, row in df.iterrows():
         price = row.get("価格")
         if pd.isna(price) or not price or float(price) <= 0:
             continue
-
         hinbans = []
         if "品番" in df.columns and pd.notna(row.get("品番")):
             h = str(row["品番"]).strip()
@@ -1840,23 +1613,17 @@ def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
                 part = part.strip()
                 if part and len(part) >= 3 and not re.fullmatch(r'\d{10,}', part):
                     hinbans.append(part)
-
         for h in hinbans:
             if h not in hinban_prices:
                 hinban_prices[h] = []
             hinban_prices[h].append(float(price))
-
-    # 各品番にKDE分析結果を追加
     counts = []
     kde_prices = []
     price_ranges = []
-
     for _, row in mapping_df.iterrows():
         hinban = row["品番"]
         prices = hinban_prices.get(hinban, [])
-
         counts.append(len(prices))
-
         if prices:
             peak = _kde_peak_price(prices)
             kde_prices.append(peak)
@@ -1867,29 +1634,21 @@ def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
         else:
             kde_prices.append(0)
             price_ranges.append("")
-
     enriched = mapping_df.copy()
     enriched["件数"] = counts
     enriched["KDE代表価格"] = kde_prices
     enriched["価格レンジ"] = price_ranges
-
-    # フィルタ: 正式名称あり & KDE代表価格 > min_price
     filtered = enriched[
         (enriched["正式名称"] != "") &
         ((enriched["KDE代表価格"] > min_price) | (enriched["KDE代表価格"] == 0))
     ].copy()
-
     return enriched, filtered
-
-
 # タイトル
 st.title("👜 ブランドECスクレイパー")
 st.caption("ECサイトとブランドを選んで商品データを取得")
-
 # サイドバー
 with st.sidebar:
     st.markdown("### 🏬 ECサイト選択")
-
     all_site_names = list(EC_SITES.keys())
     selected_sites = st.multiselect(
         "スクレイピング先（複数選択可）",
@@ -1898,18 +1657,13 @@ with st.sidebar:
         format_func=lambda x: f"{EC_SITES[x]['icon']} {x}",
     )
     st.session_state.selected_sites = selected_sites
-
     st.divider()
-
     st.markdown("### 🔧 検索条件")
-
     brand_input = st.text_input(
         "ブランド名（英語）",
         value="fendi",
         help="スペースなしの英語で入力"
     )
-
-    # カテゴリ表示: 1サイトならそのサイト固有、複数サイトなら全カテゴリ固定
     if len(selected_sites) == 1:
         selected_ec = selected_sites[0]
         if selected_ec == "コメ兵":
@@ -1921,10 +1675,9 @@ with st.sidebar:
         elif selected_ec == "セカスト":
             st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe")
             categories = SECONDSTREET_CATEGORIES
-        else:  # トレファク
+        else:
             st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe")
             categories = TREFAC_CATEGORIES
-
         category_name = st.selectbox(
             "カテゴリ",
             options=list(categories.keys()),
@@ -1936,9 +1689,7 @@ with st.sidebar:
         if len(selected_sites) >= 2:
             st.info("📂 複数サイト選択時はカテゴリ: 全カテゴリ で実行されます")
         category = ""
-
     all_pages = st.checkbox("全件取得", value=False)
-
     if all_pages:
         max_pages = 999
     else:
@@ -1950,20 +1701,14 @@ with st.sidebar:
                 max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約100件")
             elif selected_ec == "セカスト":
                 max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約60件")
-            else:  # トレファク
+            else:
                 max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約90件")
         else:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
-
-    # セカスト選択時にundetected-chromedriver未インストールなら警告
     if "セカスト" in selected_sites and not UC_AVAILABLE:
-        st.error(f"⚠ セカストにはundetected-chromedriverが必要です。\n\n詳細: {_UC_IMPORT_ERROR}")
-
+        st.error(f"⚠ セカストにはplaywright+Chromiumが必要です。\n\n詳細: {_UC_IMPORT_ERROR}")
     st.divider()
-
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
-
-    # 結果クリアボタン
     if st.session_state.scraping_done:
         if st.button("🗑️ 結果をクリア", use_container_width=True):
             st.session_state.results_df = None
@@ -1974,8 +1719,6 @@ with st.sidebar:
             st.session_state.hinban_merged_df = None
             st.session_state.wear_catalog_cache = {}
             st.rerun()
-
-
 # メイン処理
 if scrape_button:
     if not brand_input:
@@ -1987,7 +1730,6 @@ if scrape_button:
         selected_ec = selected_sites[0]
         progress_bar = st.progress(0)
         status_text = st.empty()
-
         if selected_ec == "コメ兵":
             base_url = komehyo_build_url(brand_input, category)
             get_urls_func = komehyo_get_product_urls
@@ -2000,35 +1742,28 @@ if scrape_button:
             base_url = secondstreet_build_url(brand_input, category)
             get_urls_func = secondstreet_get_product_urls
             get_detail_func = secondstreet_get_product_detail
-        else:  # トレファク
+        else:
             base_url = trefac_build_url(brand_input, category)
             get_urls_func = trefac_get_product_urls
             get_detail_func = trefac_get_product_detail
-
         status_text.text(f"🔗 URL: {base_url}")
-
         def update_status(msg):
             status_text.text(msg)
-
         product_urls = get_urls_func(base_url, max_pages, update_status)
-
         if not product_urls:
             st.error("❌ 商品が見つかりませんでした。ブランド名を確認してください。")
             st.info(f"試したURL: {base_url}")
         else:
             st.info(f"📦 {len(product_urls)}件の商品を発見")
-
             if selected_ec == "セカスト":
                 status_text.text("📦 データを整理中...")
                 results = [get_detail_func(url) for url in product_urls]
                 results = [r for r in results if r]
             elif selected_ec in ["RAGTAG", "トレファク"]:
                 status_text.text("🚀 並列処理で詳細取得中...")
-
                 def update_progress(completed, total):
                     progress_bar.progress(completed / total)
                     status_text.text(f"🚀 [{completed}/{total}] 並列取得中...")
-
                 results = get_products_parallel(product_urls, get_detail_func, max_workers=10, progress_callback=update_progress)
             else:
                 results = []
@@ -2040,25 +1775,21 @@ if scrape_button:
                     if data:
                         results.append(data)
                     time.sleep(random.uniform(0.3, 0.7))
-
             status_text.text("✅ 完了！")
             progress_bar.progress(1.0)
-
             if results:
                 df = pd.DataFrame(results)
                 columns = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
                 df = df[[c for c in columns if c in df.columns]]
-
                 st.session_state.results_df = df
                 st.session_state.brand_name = brand_input
                 st.session_state.scraping_done = True
                 st.rerun()
             else:
                 st.warning("⚠️ 商品詳細の取得に失敗しました")
-
     else:
         # ===== 複数サイト =====
-        _cat = category  # サイドバーで設定済み（複数サイト時は ""）
+        _cat = category
         all_site_configs = {
             "コメ兵": {
                 "icon": "🏪",
@@ -2090,38 +1821,27 @@ if scrape_button:
                 "cached": True,
             },
         }
-
-        # 選択されたサイトだけフィルタ
         targets = [(name, all_site_configs[name]) for name in selected_sites if name in all_site_configs]
         total_sites = len(targets)
-
         all_results = []
         overall_progress = st.progress(0)
         overall_status = st.empty()
-
         for site_idx, (site_name, config) in enumerate(targets):
             site_icon = config["icon"]
             overall_status.text(f"{site_icon} [{site_idx+1}/{total_sites}] {site_name} をスクレイピング中...")
             overall_progress.progress(site_idx / total_sites)
-
             site_progress = st.progress(0)
             site_status = st.empty()
-
             base_url = config["build_url"](brand_input)
             site_status.text(f"🔗 {site_name}: {base_url}")
-
             def update_site_status(msg, _status=site_status, _icon=site_icon, _name=site_name):
                 _status.text(f"{_icon} {_name}: {msg}")
-
             product_urls = config["get_urls"](base_url, max_pages, update_site_status)
-
             if not product_urls:
                 site_status.text(f"⚠️ {site_name}: 商品が見つかりませんでした")
                 site_progress.progress(1.0)
                 continue
-
             site_status.text(f"📦 {site_name}: {len(product_urls)}件の商品を発見")
-
             if config.get("cached"):
                 site_status.text(f"{site_icon} {site_name}: データ整理中...")
                 results = [config["get_detail"](url) for url in product_urls]
@@ -2130,7 +1850,6 @@ if scrape_button:
                 def update_site_progress(completed, total, _bar=site_progress, _status=site_status, _name=site_name, _icon=site_icon):
                     _bar.progress(completed / total)
                     _status.text(f"{_icon} {_name}: [{completed}/{total}] 並列取得中...")
-
                 results = get_products_parallel(product_urls, config["get_detail"], max_workers=10, progress_callback=update_site_progress)
             else:
                 results = []
@@ -2142,66 +1861,52 @@ if scrape_button:
                     if data:
                         results.append(data)
                     time.sleep(random.uniform(0.3, 0.7))
-
             for r in results:
                 r["サイト"] = site_name
-
             all_results.extend(results)
             site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
             site_progress.progress(1.0)
-
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
-
         if all_results:
             df = pd.DataFrame(all_results)
             columns = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
             df = df[[c for c in columns if c in df.columns]]
-
             st.session_state.results_df = df
             st.session_state.brand_name = brand_input
             st.session_state.scraping_done = True
             st.rerun()
         else:
             st.warning("⚠️ どのサイトからも商品を取得できませんでした")
-
-
 # 結果表示（session_stateから）
 if st.session_state.scraping_done and st.session_state.results_df is not None:
     df = st.session_state.results_df
-
     st.success(f"✅ {len(df)}件の商品データを取得しました")
-
-    # サイト別の内訳表示（一括スクレイピング時）
     if "サイト" in df.columns:
         site_counts = df["サイト"].value_counts()
         site_summary = " / ".join([f"{EC_SITES[s]['icon']} {s}: {c}件" for s, c in site_counts.items() if s in EC_SITES])
         st.info(f"📊 サイト別内訳: {site_summary}")
-
-    # 統計
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
+    # メトリクス（2行x2列でスマホでも見やすく）
+    mcol1, mcol2 = st.columns(2)
+    with mcol1:
         st.metric("取得件数", f"{len(df)}件")
-    with col2:
+    with mcol2:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("平均価格", f"¥{df['価格'].mean():,.0f}")
-    with col3:
+    mcol3, mcol4 = st.columns(2)
+    with mcol3:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("最安値", f"¥{df['価格'].min():,.0f}")
-    with col4:
+    with mcol4:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("最高値", f"¥{df['価格'].max():,.0f}")
-
     st.dataframe(df, use_container_width=True, height=400)
-
-    # Excel出力
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if "サイト" in df.columns:
         filename = f"allsites_{st.session_state.brand_name}_{timestamp}.xlsx"
     else:
         ec_name = st.session_state.selected_ec.lower().replace(" ", "")
         filename = f"{ec_name}_{st.session_state.brand_name}_{timestamp}.xlsx"
-
     excel_data = to_excel(df)
     st.download_button(
         label="📥 Excelダウンロード",
@@ -2210,39 +1915,32 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.xlsx",
         use_container_width=True
     )
-
     # ===== 品番→正式名称検索セクション =====
     has_hinban = "品番" in df.columns or "型番" in df.columns
     if has_hinban:
         st.divider()
         st.markdown("### 🔎 品番→正式名称検索")
-
         unique_hinban = extract_unique_hinban(df)
-
         if not unique_hinban:
             st.info("📝 有効な品番が見つかりませんでした")
         else:
             st.info(f"📝 ユニーク品番数: **{len(unique_hinban)}**件（名寄せ済み）")
-
             with st.expander("品番一覧を確認"):
                 st.write(", ".join(unique_hinban[:100]))
                 if len(unique_hinban) > 100:
                     st.caption(f"...他 {len(unique_hinban) - 100}件")
-
             wear_search_enabled = st.checkbox(
                 "👗 WEAR検索で補完（ZOZOTOWN系ブランドに有効）",
                 value=True,
                 key="hinban_wear_search",
                 help="WEAR APIで品番を検索。TODAYFUL等のZOZOTOWN取扱ブランドに高精度。APIキー不要・高速。",
             )
-
             web_search_enabled = st.checkbox(
                 "🌐 Web検索で補完（DDG/Brave、レート制限あり）",
                 value=False,
                 key="hinban_web_search",
                 help="WEARでも見つからなかった品番をDDG/Braveで検索。レート制限があるため数件のみ。",
             )
-
             max_lookup = st.slider(
                 "対象品番数の上限",
                 min_value=1,
@@ -2250,18 +1948,14 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                 value=len(unique_hinban),
                 key="hinban_max_lookup",
             )
-
             lookup_button = st.button("🔍 正式名称を取得", type="primary", use_container_width=True, key="hinban_lookup_btn")
-
             if lookup_button:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-
                 def update_lookup_progress(current, total, msg):
                     if total > 0:
                         progress_bar.progress(min(current / total, 1.0))
                     status_text.text(msg)
-
                 mapping_df = lookup_official_names(
                     df,
                     brand=st.session_state.brand_name,
@@ -2270,16 +1964,12 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                     web_search=web_search_enabled,
                     progress_callback=update_lookup_progress,
                 )
-
                 st.session_state.hinban_mapping_df = mapping_df
                 st.session_state.hinban_lookup_done = True
                 st.rerun()
-
-        # 検索結果の表示
         if st.session_state.hinban_lookup_done and st.session_state.hinban_mapping_df is not None:
             mapping_df = st.session_state.hinban_mapping_df
             found_count = (mapping_df["正式名称"] != "").sum()
-
             local_count = (mapping_df["ソース"] == "ローカル").sum()
             wear_count = (mapping_df["ソース"] == "WEAR").sum()
             web_count = (mapping_df["ソース"] == "Web検索").sum()
@@ -2289,35 +1979,23 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
             if web_count > 0:
                 source_detail += f" / Web: {web_count}件"
             source_detail += "）"
-
             st.success(f"✅ {found_count}/{len(mapping_df)}件の品番で正式名称を特定 {source_detail}")
-
-            # --- KDE価格分析 & フィルタ ---
             enriched_df, filtered_df = enrich_mapping_with_kde(df, mapping_df, min_price=10000)
-
             excluded_count = len(enriched_df[
                 (enriched_df["正式名称"] != "") &
                 (enriched_df["KDE代表価格"] > 0) &
                 (enriched_df["KDE代表価格"] <= 10000)
             ])
             no_name_count = (enriched_df["正式名称"] == "").sum()
-
             if excluded_count > 0:
                 st.info(f"📊 KDE分析: **{excluded_count}件**をKDE代表価格≤¥10,000で除外 / 名称未特定: {no_name_count}件")
-
-            # フィルタ済みテーブルの表示カラム
             display_cols = ["品番", "正式名称", "件数", "KDE代表価格", "価格レンジ", "ソース"]
             display_df = filtered_df[[c for c in display_cols if c in filtered_df.columns]].copy()
-
-            # KDE代表価格をフォーマット
             if "KDE代表価格" in display_df.columns:
                 display_df["KDE代表価格"] = display_df["KDE代表価格"].apply(
                     lambda x: f"¥{x:,.0f}" if x > 0 else ""
                 )
-
             st.dataframe(display_df, use_container_width=True, height=300)
-
-            # 除外された品番を確認するエクスパンダー
             if excluded_count > 0:
                 with st.expander(f"🚫 除外された品番を確認（{excluded_count}件: KDE代表価格≤¥10,000）"):
                     excluded_df = enriched_df[
@@ -2330,21 +2008,16 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                             lambda x: f"¥{x:,.0f}" if x > 0 else ""
                         )
                     st.dataframe(excluded_df, use_container_width=True)
-
-            # === 1シートExcel出力（上段: 品番マッピング / 下段: 正式名称集計） ===
             st.divider()
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             brand = st.session_state.brand_name
-
             def build_single_sheet_excel():
                 """1シートに品番マッピング＋KDEと正式名称集計を縦に並べて出力"""
                 from openpyxl import Workbook
                 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
                 wb = Workbook()
                 ws = wb.active
                 ws.title = "分析結果"
-
                 header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
                 header_font = Font(bold=True, size=11, color="FFFFFF")
                 section_font = Font(bold=True, size=13)
@@ -2353,22 +2026,18 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                     left=Side(style='thin'), right=Side(style='thin'),
                     top=Side(style='thin'), bottom=Side(style='thin'),
                 )
-
                 row = 1
-
                 # ===== 上段: 品番マッピング＋KDE =====
                 ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
                 c = ws.cell(row=row, column=1, value="■ 品番マッピング＋KDE")
                 c.font = section_font; c.fill = section_fill
                 row += 1
-
                 s1_headers = ["ブランド名", "品番", "KDE代表価格", "件数", "ソース", "価格レンジ"]
                 for ci, h in enumerate(s1_headers, 1):
                     c = ws.cell(row=row, column=ci, value=h)
                     c.font = header_font; c.fill = header_fill; c.border = thin_border
                     c.alignment = Alignment(horizontal='center')
                 row += 1
-
                 for _, dr in filtered_df.iterrows():
                     s1_row_data = {
                         "ブランド名": brand.upper(),
@@ -2389,13 +2058,10 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                             if col == "KDE代表価格":
                                 c.number_format = '#,##0'
                     row += 1
-
-                row += 2  # 空行
-
+                row += 2
                 # ===== 下段: 正式名称集計 =====
                 original_df = st.session_state.results_df.copy()
                 name_map = dict(zip(filtered_df["品番"], filtered_df["正式名称"]))
-
                 merged = original_df.copy()
                 merged["正式名称"] = ""
                 if "品番" in merged.columns:
@@ -2411,7 +2077,6 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                                 if part in name_map and name_map[part]:
                                     merged.at[idx, "正式名称"] = name_map[part]
                                     break
-
                 named = merged[merged["正式名称"] != ""].copy()
                 groups = []
                 if len(named) > 0 and "価格" in named.columns:
@@ -2430,19 +2095,16 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                             "最高値": int(max(prices)),
                         })
                     groups.sort(key=lambda x: -x["KDE代表価格"])
-
                 ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
                 c = ws.cell(row=row, column=1, value="■ 正式名称集計（同名統合・KDE価格順）")
                 c.font = section_font; c.fill = section_fill
                 row += 1
-
                 s2_headers = ["ブランド名", "正式名称", "KDE代表価格", "件数"]
                 for ci, h in enumerate(s2_headers, 1):
                     c = ws.cell(row=row, column=ci, value=h)
                     c.font = header_font; c.fill = header_fill; c.border = thin_border
                     c.alignment = Alignment(horizontal='center')
                 row += 1
-
                 for g in groups:
                     s2_row_data = {
                         "ブランド名": g.get("ブランド", ""),
@@ -2459,19 +2121,15 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                             if col == "KDE代表価格":
                                 c.number_format = '#,##0'
                     row += 1
-
-                # 列幅
                 ws.column_dimensions['A'].width = 18
                 ws.column_dimensions['B'].width = 48
                 ws.column_dimensions['C'].width = 16
                 ws.column_dimensions['D'].width = 10
                 ws.column_dimensions['E'].width = 14
                 ws.column_dimensions['F'].width = 20
-
                 output = BytesIO()
                 wb.save(output)
                 return output.getvalue()
-
             excel_data = build_single_sheet_excel()
             st.download_button(
                 label="📥 Excelダウンロード",
@@ -2481,8 +2139,6 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                 use_container_width=True,
                 key="hinban_mapping_dl",
             )
-
-
 # 使い方
 with st.expander("📖 使い方"):
     st.markdown("""
@@ -2493,7 +2149,6 @@ with st.expander("📖 使い方"):
     4. **取得ページ数を設定**: 1ページ約50〜90件
     5. **「スクレイピング開始」をクリック**
     6. 完了後「Excelダウンロード」で保存
-
     ### ブランド名の書き方
     | ブランド | コメ兵 | RAGTAG | トレファク | セカスト |
     |----------|--------|--------|------------|---------|
@@ -2505,14 +2160,10 @@ with st.expander("📖 使い方"):
     | プラダ | `prada` | `PRADA` | `prada` | `prada` |
     | セリーヌ | `celine` | `CELINE` | `celine` | `celine` |
     | ロエベ | `loewe` | `LOEWE` | `loewe` | `loewe` |
-
     ※RAGTAGは自動で大文字変換されます
-
     ⚠️ **セカスト利用時の注意**:
-    - Google Chrome がPCにインストールされている必要があります
-    - 初回は `setup_sekast.bat` を実行してください
-    - スクレイピング中にChromeウィンドウが自動で開きます（画面外に配置されます）
+    - Playwright + Chromium が必要です（Streamlit Cloudでは自動インストール）
+    - スクレイピング中にヘッドレスブラウザが使用されます
     """)
-
 st.divider()
 st.caption("⚠️ 利用は自己責任で。robots.txt・利用規約を確認してください。")
