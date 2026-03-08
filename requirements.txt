@@ -1,0 +1,6 @@
+streamlit>=1.30.0
+requests
+beautifulsoup4
+pandas
+numpy
+openpyxl
