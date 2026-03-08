@@ -12,10 +12,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys as _sys
 _UC_IMPORT_ERROR = ""
 try:
-    import undetected_chromedriver as uc
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as WaitEC
+    from playwright.sync_api import sync_playwright
+    import subprocess as _subprocess
+    # Chromiumが未インストールなら自動インストール
+    try:
+        _subprocess.run(["playwright", "install", "chromium"], capture_output=True, timeout=120)
+    except Exception:
+        pass
     UC_AVAILABLE = True
 except Exception as _e:
     UC_AVAILABLE = False
@@ -926,61 +929,61 @@ def trefac_get_product_detail(url):
     except Exception as e:
         return None
 # ===== セカスト用関数 =====
-_uc_driver = None
+_pw_context = None  # {"playwright": ..., "browser": ..., "page": ...}
 _secondstreet_cache = {}
-def _init_uc_driver():
-    """undetected-chromedriverを初期化"""
-    global _uc_driver
-    if _uc_driver is not None:
-        try:
-            _uc_driver.quit()
-        except Exception:
-            pass
-        _uc_driver = None
-    options = uc.ChromeOptions()
-    options.add_argument("--window-position=-32000,-32000")
-    options.add_argument("--window-size=800,600")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    _uc_driver = uc.Chrome(options=options)
-    return _uc_driver
+def _init_pw_browser():
+    """Playwrightブラウザを初期化"""
+    global _pw_context
+    _close_secondstreet_browser()
+    pw = sync_playwright().start()
+    browser = pw.chromium.launch(headless=True, args=[
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+    ])
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 720},
+    )
+    page = context.new_page()
+    _pw_context = {"playwright": pw, "browser": browser, "page": page}
+    return page
 def _get_secondstreet_page(url, wait_selector=None, retry=True):
-    """undetected-chromedriverで実Chromeブラウザを使いページHTMLを取得"""
-    global _uc_driver
+    """Playwrightで実Chromiumブラウザを使いページHTMLを取得"""
+    global _pw_context
     if not UC_AVAILABLE:
-        raise Exception("undetected-chromedriver未インストール: pip install undetected-chromedriver")
-    if _uc_driver is None:
-        _init_uc_driver()
+        raise Exception("playwright未インストール: pip install playwright && playwright install chromium")
+    if _pw_context is None:
+        _init_pw_browser()
+    page = _pw_context["page"]
     try:
-        _uc_driver.get(url)
+        page.goto(url, timeout=30000)
     except Exception as e:
         if retry:
-            _init_uc_driver()
+            _init_pw_browser()
             return _get_secondstreet_page(url, wait_selector, retry=False)
         raise
     if wait_selector:
         try:
-            WebDriverWait(_uc_driver, 20).until(
-                WaitEC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
-            )
+            page.wait_for_selector(wait_selector, timeout=20000)
         except Exception:
             time.sleep(5)
             if retry:
-                _init_uc_driver()
+                _init_pw_browser()
                 return _get_secondstreet_page(url, wait_selector, retry=False)
     else:
         time.sleep(3)
-    return _uc_driver.page_source
+    return page.content()
 def _close_secondstreet_browser():
-    """undetected-chromedriverを閉じる"""
-    global _uc_driver
+    """Playwrightブラウザを閉じる"""
+    global _pw_context
     try:
-        if _uc_driver:
-            _uc_driver.quit()
+        if _pw_context:
+            _pw_context["browser"].close()
+            _pw_context["playwright"].stop()
     except Exception:
         pass
-    _uc_driver = None
+    _pw_context = None
 def _parse_secondstreet_name(full_name):
     """商品名文字列を 商品名 / 型番 / 素材 / カラー / 商品番号 に分割"""
     if not full_name:
@@ -1703,7 +1706,7 @@ with st.sidebar:
         else:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
     if "セカスト" in selected_sites and not UC_AVAILABLE:
-        st.error(f"⚠ セカストにはundetected-chromedriverが必要です。\n\n詳細: {_UC_IMPORT_ERROR}")
+        st.error(f"⚠ セカストにはplaywright+Chromiumが必要です。\n\n詳細: {_UC_IMPORT_ERROR}")
     st.divider()
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
@@ -2159,9 +2162,8 @@ with st.expander("📖 使い方"):
     | ロエベ | `loewe` | `LOEWE` | `loewe` | `loewe` |
     ※RAGTAGは自動で大文字変換されます
     ⚠️ **セカスト利用時の注意**:
-    - Google Chrome がPCにインストールされている必要があります
-    - 初回は `setup_sekast.bat` を実行してください
-    - スクレイピング中にChromeウィンドウが自動で開きます（画面外に配置されます）
+    - Playwright + Chromium が必要です（Streamlit Cloudでは自動インストール）
+    - スクレイピング中にヘッドレスブラウザが使用されます
     """)
 st.divider()
 st.caption("⚠️ 利用は自己責任で。robots.txt・利用規約を確認してください。")
