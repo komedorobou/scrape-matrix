@@ -1241,10 +1241,11 @@ def _check_count_trefac(brand, category):
         return None, url
 
 def _check_count_secondstreet(brand, category):
-    """セカスト: 検索結果件数を概算取得"""
+    """セカスト: 検索結果件数を概算取得（本体と同じフォールバック順）"""
     url = secondstreet_build_url(brand, category)
     try:
         html = None
+        # 0) ScraperAPI（APIキーがあれば最優先）
         scraper_api_key = st.session_state.get("scraper_api_key", "")
         if scraper_api_key:
             try:
@@ -1254,11 +1255,25 @@ def _check_count_secondstreet(brand, category):
                     html = res.text
             except Exception:
                 pass
+        # 1) Chrome（undetected-chromedriver）
+        if not html:
+            html = _fetch_with_chrome(url)
+        # 2) curl_cffi（TLS指紋偽装）
         if not html:
             html = _fetch_with_curl(url)
+        # 3) cloudscraper
         if not html and _scraper:
             try:
                 res = _scraper.get(url, headers=HEADERS, timeout=15)
+                if res.status_code == 200:
+                    html = res.text
+            except Exception:
+                pass
+        # 4) requests Session（Cookie保持で403回避）
+        if not html:
+            try:
+                ss = _get_secondstreet_session()
+                res = ss.get(url, timeout=30)
                 if res.status_code == 200:
                     html = res.text
             except Exception:
