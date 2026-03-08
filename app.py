@@ -2032,14 +2032,18 @@ if count_button:
             if site_name in count_results:
                 info = count_results[site_name]
                 icon = EC_SITES[site_name]["icon"]
-                if info["count"] is not None:
+                debug_msg = info.get("debug", "")
+                if info["count"] is not None and info["count"] > 0:
                     total += info["count"]
-                    st.info(f"{icon} **{site_name}**: 約 **{info['count']:,}件**")
+                    st.success(f"{icon} **{site_name}**: 約 **{info['count']:,}件**")
+                elif info["count"] == 0:
+                    st.error(f"{icon} **{site_name}**: 約 **0件**")
+                    if debug_msg:
+                        st.warning(f"🔧 デバッグ: {debug_msg}")
                 else:
-                    st.warning(f"{icon} **{site_name}**: 取得失敗")
-                # セカストのデバッグ情報を表示
-                if "debug" in info and info["debug"]:
-                    st.caption(f"🔧 {site_name}: {info['debug']}")
+                    st.error(f"{icon} **{site_name}**: 取得失敗")
+                    if debug_msg:
+                        st.warning(f"🔧 デバッグ: {debug_msg}")
         if total > 0:
             st.success(f"📦 合計: 約 **{total:,}件**（概算）")
 # メイン処理
