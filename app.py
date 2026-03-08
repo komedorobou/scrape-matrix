@@ -1243,6 +1243,8 @@ def _check_count_trefac(brand, category):
 def _check_count_secondstreet(brand, category, scraper_api_key=""):
     """セカスト: 検索結果件数を概算取得（本体と同じフォールバック順）"""
     url = secondstreet_build_url(brand, category)
+    method = ""
+    debug = ""
     try:
         html = None
         # 0) ScraperAPI（APIキーがあれば最優先・render=trueでJS実行）
@@ -1252,22 +1254,38 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
                 res = requests.get(api_url, timeout=60)
                 if res.status_code == 200:
                     html = res.text
-            except Exception:
-                pass
+                    method = "ScraperAPI"
+                else:
+                    debug += f"ScraperAPI: HTTP {res.status_code}; "
+            except Exception as e:
+                debug += f"ScraperAPI: {e}; "
+        else:
+            debug += "ScraperAPI: キーなし; "
         # 1) Chrome（undetected-chromedriver）
         if not html:
             html = _fetch_with_chrome(url)
+            if html:
+                method = "Chrome"
+            else:
+                debug += "Chrome: 失敗; "
         # 2) curl_cffi（TLS指紋偽装）
         if not html:
             html = _fetch_with_curl(url)
+            if html:
+                method = "curl_cffi"
+            else:
+                debug += "curl_cffi: 失敗; "
         # 3) cloudscraper
         if not html and _scraper:
             try:
                 res = _scraper.get(url, headers=HEADERS, timeout=15)
                 if res.status_code == 200:
                     html = res.text
-            except Exception:
-                pass
+                    method = "cloudscraper"
+                else:
+                    debug += f"cloudscraper: HTTP {res.status_code}; "
+            except Exception as e:
+                debug += f"cloudscraper: {e}; "
         # 4) requests Session（Cookie保持で403回避）
         if not html:
             try:
@@ -1275,39 +1293,42 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
                 res = ss.get(url, timeout=30)
                 if res.status_code == 200:
                     html = res.text
-            except Exception:
-                pass
+                    method = "requests"
+                else:
+                    debug += f"requests: HTTP {res.status_code}; "
+            except Exception as e:
+                debug += f"requests: {e}; "
         if not html:
-            return None, url
+            return None, url, f"全方式失敗 ({debug})"
         soup = BeautifulSoup(html, 'html.parser')
+        title = soup.select_one('title')
+        title_text = title.get_text(strip=True) if title else "(no title)"
         text = soup.get_text()
         m = re.search(r'([\d,]+)\s*件', text)
         if m:
-            return int(m.group(1).replace(',', '')), url
+            return int(m.group(1).replace(',', '')), url, f"{method} / title={title_text}"
         cards = soup.select('.itemCard')
-        return (len(cards), url) if cards else (0, url)
-    except Exception:
-        return None, url
+        if cards:
+            return len(cards), url, f"{method} / cards={len(cards)} / title={title_text}"
+        return 0, url, f"{method} / HTML={len(html)}文字 / title={title_text} / cards=0 / 件テキストなし"
+    except Exception as e:
+        return None, url, f"例外: {e}"
 
 def check_product_counts(brand, category, selected_sites):
     """選択サイトの商品件数を一括チェック"""
-    # メインスレッドでst.session_stateから取得（スレッド内ではアクセス不可）
     scraper_api_key = st.session_state.get("scraper_api_key", "")
-    checkers = {
+    other_checkers = {
         "コメ兵": _check_count_komehyo,
         "RAGTAG": _check_count_ragtag,
         "トレファク": _check_count_trefac,
-        "セカスト": _check_count_secondstreet,
     }
     results = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    # セカスト以外は並列実行
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {}
         for site in selected_sites:
-            if site in checkers:
-                if site == "セカスト":
-                    futures[executor.submit(checkers[site], brand, category, scraper_api_key)] = site
-                else:
-                    futures[executor.submit(checkers[site], brand, category)] = site
+            if site in other_checkers:
+                futures[executor.submit(other_checkers[site], brand, category)] = site
         for future in as_completed(futures):
             site = futures[future]
             try:
@@ -1315,6 +1336,13 @@ def check_product_counts(brand, category, selected_sites):
                 results[site] = {"count": count, "url": url}
             except Exception:
                 results[site] = {"count": None, "url": ""}
+    # セカストはメインスレッドで実行（st.session_state対応 + デバッグ出力）
+    if "セカスト" in selected_sites:
+        try:
+            count, url, debug_msg = _check_count_secondstreet(brand, category, scraper_api_key)
+            results["セカスト"] = {"count": count, "url": url, "debug": debug_msg}
+        except Exception as e:
+            results["セカスト"] = {"count": None, "url": "", "debug": str(e)}
     return results
 
 def to_excel(df):
@@ -1950,6 +1978,9 @@ if count_button:
                     st.info(f"{icon} **{site_name}**: 約 **{info['count']:,}件**")
                 else:
                     st.warning(f"{icon} **{site_name}**: 取得失敗")
+                # セカストのデバッグ情報を表示
+                if "debug" in info and info["debug"]:
+                    st.caption(f"🔧 {site_name}: {info['debug']}")
         if total > 0:
             st.success(f"📦 合計: 約 **{total:,}件**（概算）")
 # メイン処理
