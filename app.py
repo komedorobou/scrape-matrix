@@ -15,6 +15,61 @@ try:
     _scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
 except Exception:
     _scraper = None
+# curl_cffi（ブラウザTLS指紋を再現してCloudflare突破）
+_curl_session = None
+def _get_curl_session():
+    """curl_cffi のセッションを取得"""
+    global _curl_session
+    if _curl_session is not None:
+        return _curl_session
+    try:
+        from curl_cffi.requests import Session
+        _curl_session = Session(impersonate="chrome131")
+        return _curl_session
+    except Exception:
+        return None
+def _fetch_with_curl(url, timeout=30):
+    """curl_cffiでページを取得。成功時は(html, status_code)、失敗時はNone"""
+    s = _get_curl_session()
+    if s is None:
+        return None
+    try:
+        res = s.get(url, timeout=timeout)
+        if res.status_code == 200:
+            return res.text
+        return None
+    except Exception:
+        return None
+# undetected-chromedriver（ローカルChrome用）
+_uc_driver = None
+def _get_uc_driver():
+    """undetected-chromedriver のドライバーを取得（シングルトン）"""
+    global _uc_driver
+    if _uc_driver is not None:
+        return _uc_driver
+    try:
+        import undetected_chromedriver as uc
+        options = uc.ChromeOptions()
+        options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        _uc_driver = uc.Chrome(options=options, version_main=None)
+        _uc_driver.set_page_load_timeout(30)
+        return _uc_driver
+    except Exception:
+        return None
+def _fetch_with_chrome(url, timeout=30):
+    """Chromeでページを取得。成功時はHTMLテキスト、失敗時はNone"""
+    driver = _get_uc_driver()
+    if driver is None:
+        return None
+    try:
+        driver.get(url)
+        time.sleep(2)  # JSレンダリング待ち
+        return driver.page_source
+    except Exception:
+        return None
 # ページ設定
 st.set_page_config(
     page_title="ブランドECスクレイパー",
@@ -557,7 +612,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 # 定数
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+}
+# セカスト用セッション（Cookie保持）
+_secondstreet_session = None
+def _get_secondstreet_session():
+    """セカスト用のHTTPセッションを取得（Cookie付き）"""
+    global _secondstreet_session
+    if _secondstreet_session is not None:
+        return _secondstreet_session
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    # まずトップページにアクセスしてCookieを取得
+    try:
+        s.get("https://www.2ndstreet.jp/", timeout=15)
+    except Exception:
+        pass
+    _secondstreet_session = s
+    return s
 # EC設定
 EC_SITES = {
     "コメ兵": {
@@ -961,19 +1043,62 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
         try:
-            http = _scraper if _scraper else requests
-            res = http.get(url, headers=HEADERS, timeout=30)
-            if res.status_code != 200:
+            html = None
+            method = ""
+            # 0) ScraperAPI（APIキーがあれば最優先・確実）
+            scraper_api_key = st.session_state.get("scraper_api_key", "")
+            if not html and scraper_api_key:
+                try:
+                    api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
+                    res = requests.get(api_url, timeout=60)
+                    if res.status_code == 200:
+                        html = res.text
+                        method = "ScraperAPI"
+                except Exception:
+                    pass
+            # 1) Chrome（undetected-chromedriver）- ローカル最強
+            if not html:
+                html = _fetch_with_chrome(url)
+                if html:
+                    method = "Chrome"
+            # 2) curl_cffi（TLS指紋偽装）
+            if not html:
+                html = _fetch_with_curl(url)
+                if html:
+                    method = "curl_cffi"
+            # 3) cloudscraper
+            if not html and _scraper:
+                try:
+                    res = _scraper.get(url, headers=HEADERS, timeout=30)
+                    if res.status_code == 200:
+                        html = res.text
+                        method = "cloudscraper"
+                except Exception:
+                    pass
+            # 4) requests Session（Cookie保持で403回避）
+            if not html:
+                ss = _get_secondstreet_session()
+                res = ss.get(url, timeout=30)
+                if res.status_code == 200:
+                    html = res.text
+                    method = "requests"
+                else:
+                    if progress_callback:
+                        progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
+                    break
+            if not html:
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
+                    progress_callback(f"⚠ ページ {page}: HTMLを取得できませんでした")
                 break
-            soup = BeautifulSoup(res.text, 'html.parser')
+            if progress_callback and page == 1:
+                progress_callback(f"🔧 取得方式: {method}")
+            soup = BeautifulSoup(html, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(res.text)}文字")
+                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(html)}文字")
                 break
             new_count = 0
             for card in cards:
@@ -1058,6 +1183,121 @@ def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callba
             if progress_callback:
                 progress_callback(completed, total)
     return results
+# ===== 件数チェック（1ページ目だけ取得して概算） =====
+def _check_count_komehyo(brand, category):
+    """コメ兵: 検索結果件数を概算取得"""
+    url = komehyo_build_url(brand, category)
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        if res.status_code != 200:
+            return None, url
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # 件数テキストを探す（例: "123件"）
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        # フォールバック: 商品リンク数をカウント
+        links = soup.select('a[href*="/product/"]')
+        count = len(set(a.get('href', '') for a in links))
+        return (count, url) if count else (0, url)
+    except Exception:
+        return None, url
+
+def _check_count_ragtag(brand, category):
+    """RAGTAG: 検索結果件数を概算取得"""
+    url = ragtag_build_url(brand, category)
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        if res.status_code != 200:
+            return None, url
+        soup = BeautifulSoup(res.text, 'html.parser')
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        links = [a for a in soup.find_all('a', href=True) if '/item/' in a.get('href', '')]
+        count = len(set(a.get('href', '') for a in links))
+        return (count, url) if count else (0, url)
+    except Exception:
+        return None, url
+
+def _check_count_trefac(brand, category):
+    """トレファク: 検索結果件数を概算取得"""
+    url = trefac_build_url(brand, category)
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        if res.status_code != 200:
+            return None, url
+        soup = BeautifulSoup(res.text, 'html.parser')
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        links = [a for a in soup.find_all('a', href=True) if re.search(r'/store/\d{10,}/', a.get('href', ''))]
+        count = len(set(a.get('href', '') for a in links))
+        return (count, url) if count else (0, url)
+    except Exception:
+        return None, url
+
+def _check_count_secondstreet(brand, category):
+    """セカスト: 検索結果件数を概算取得"""
+    url = secondstreet_build_url(brand, category)
+    try:
+        html = None
+        scraper_api_key = st.session_state.get("scraper_api_key", "")
+        if scraper_api_key:
+            try:
+                api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
+                res = requests.get(api_url, timeout=30)
+                if res.status_code == 200:
+                    html = res.text
+            except Exception:
+                pass
+        if not html:
+            html = _fetch_with_curl(url)
+        if not html and _scraper:
+            try:
+                res = _scraper.get(url, headers=HEADERS, timeout=15)
+                if res.status_code == 200:
+                    html = res.text
+            except Exception:
+                pass
+        if not html:
+            return None, url
+        soup = BeautifulSoup(html, 'html.parser')
+        text = soup.get_text()
+        m = re.search(r'([\d,]+)\s*件', text)
+        if m:
+            return int(m.group(1).replace(',', '')), url
+        cards = soup.select('.itemCard')
+        return (len(cards), url) if cards else (0, url)
+    except Exception:
+        return None, url
+
+def check_product_counts(brand, category, selected_sites):
+    """選択サイトの商品件数を一括チェック"""
+    checkers = {
+        "コメ兵": _check_count_komehyo,
+        "RAGTAG": _check_count_ragtag,
+        "トレファク": _check_count_trefac,
+        "セカスト": _check_count_secondstreet,
+    }
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {}
+        for site in selected_sites:
+            if site in checkers:
+                futures[executor.submit(checkers[site], brand, category)] = site
+        for future in as_completed(futures):
+            site = futures[future]
+            try:
+                count, url = future.result()
+                results[site] = {"count": count, "url": url}
+            except Exception:
+                results[site] = {"count": None, "url": ""}
+    return results
+
 def to_excel(df):
     """DataFrameをExcelバイナリに変換（サイト列がある場合はシート分割）"""
     output = BytesIO()
@@ -1643,6 +1883,23 @@ with st.sidebar:
         else:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
     st.divider()
+    # ScraperAPI設定（セカスト用・Streamlit Cloud対応）
+    # st.secrets に SCRAPER_API_KEY があれば自動で使う
+    secrets_key = st.secrets.get("SCRAPER_API_KEY", "") if hasattr(st, "secrets") else ""
+    if secrets_key and "scraper_api_key" not in st.session_state:
+        st.session_state["scraper_api_key"] = secrets_key
+    with st.expander("🔑 ScraperAPI設定（セカスト用）", expanded=False):
+        st.caption("Streamlit Cloudでセカストが403になる場合に使用")
+        st.caption("[無料アカウント作成（5000回/月）](https://www.scraperapi.com/signup)")
+        default_key = st.session_state.get("scraper_api_key", "")
+        api_key = st.text_input("APIキー", value=default_key, type="password", key="scraper_api_key_input")
+        if api_key:
+            st.session_state["scraper_api_key"] = api_key
+            st.success("APIキー設定済み")
+        else:
+            st.session_state["scraper_api_key"] = ""
+    st.divider()
+    count_button = st.button("📊 件数チェック", use_container_width=True, key="count_check_btn")
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
         if st.button("🗑️ 結果をクリア", use_container_width=True):
@@ -1654,6 +1911,28 @@ with st.sidebar:
             st.session_state.hinban_merged_df = None
             st.session_state.wear_catalog_cache = {}
             st.rerun()
+# 件数チェック処理
+if count_button:
+    if not brand_input:
+        st.warning("⚠️ ブランド名を入力してください")
+    elif not selected_sites:
+        st.warning("⚠️ サイトを1つ以上選択してください")
+    else:
+        with st.spinner("📊 件数を確認中..."):
+            _cat = category if len(selected_sites) == 1 else ""
+            count_results = check_product_counts(brand_input, _cat, selected_sites)
+        total = 0
+        for site_name in selected_sites:
+            if site_name in count_results:
+                info = count_results[site_name]
+                icon = EC_SITES[site_name]["icon"]
+                if info["count"] is not None:
+                    total += info["count"]
+                    st.info(f"{icon} **{site_name}**: 約 **{info['count']:,}件**")
+                else:
+                    st.warning(f"{icon} **{site_name}**: 取得失敗")
+        if total > 0:
+            st.success(f"📦 合計: 約 **{total:,}件**（概算）")
 # メイン処理
 if scrape_button:
     if not brand_input:
