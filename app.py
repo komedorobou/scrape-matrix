@@ -10,15 +10,10 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys as _sys
+import subprocess as _subprocess
 _UC_IMPORT_ERROR = ""
 try:
     from playwright.sync_api import sync_playwright
-    import subprocess as _subprocess
-    # Chromiumが未インストールなら自動インストール
-    try:
-        _subprocess.run(["playwright", "install", "chromium"], capture_output=True, timeout=120)
-    except Exception:
-        pass
     UC_AVAILABLE = True
 except Exception as _e:
     UC_AVAILABLE = False
@@ -930,11 +925,24 @@ def trefac_get_product_detail(url):
         return None
 # ===== セカスト用関数 =====
 _pw_context = None  # {"playwright": ..., "browser": ..., "page": ...}
+_pw_chromium_installed = False
 _secondstreet_cache = {}
+def _ensure_chromium():
+    """Chromiumが未インストールなら1回だけインストール"""
+    global _pw_chromium_installed
+    if _pw_chromium_installed:
+        return
+    try:
+        _subprocess.run(["playwright", "install", "chromium", "--with-deps"],
+                       capture_output=True, timeout=180)
+    except Exception:
+        pass
+    _pw_chromium_installed = True
 def _init_pw_browser():
     """Playwrightブラウザを初期化"""
     global _pw_context
     _close_secondstreet_browser()
+    _ensure_chromium()
     pw = None
     browser = None
     try:
