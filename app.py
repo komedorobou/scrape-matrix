@@ -26,6 +26,8 @@ st.set_page_config(
     page_icon="👜",
     layout="wide"
 )
+# viewportメタタグ（スマホでのズーム・スケール制御）
+st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">', unsafe_allow_html=True)
 # カスタムCSS（グラスモーフィズム＋アニメーション）
 st.markdown("""
 <style>
@@ -397,6 +399,123 @@ st.markdown("""
     /* ヘルプアイコン（？マーク）を非表示 */
     .stTooltipIcon {
         display: none !important;
+    }
+    /* ===== モバイル対応（768px以下） ===== */
+    @media (max-width: 768px) {
+        /* viewportメタタグ的な振る舞い */
+        html {
+            -webkit-text-size-adjust: 100%;
+        }
+        /* サイドバー: 幅を画面幅に合わせる */
+        [data-testid="stSidebar"] {
+            min-width: 85vw !important;
+            width: 85vw !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            width: 85vw !important;
+            padding: 1rem 1rem !important;
+        }
+        /* サイドバー開閉ボタンをスマホでは表示 */
+        button[kind="header"] {
+            display: block !important;
+        }
+        /* サイドバーのラジオボタンを1列に */
+        [data-testid="stSidebar"] [role="radiogroup"] {
+            grid-template-columns: 1fr !important;
+        }
+        /* メインコンテンツ: padding/角丸を縮小 */
+        .main .block-container {
+            padding: 0.8rem 0.5rem !important;
+            border-radius: 12px !important;
+            margin: 0.3rem !important;
+        }
+        /* タイトルを小さく */
+        h1 {
+            font-size: 1.4rem !important;
+            letter-spacing: 1px !important;
+        }
+        h2, h3 {
+            font-size: 1.1rem !important;
+        }
+        /* メトリクスカードを小さく */
+        [data-testid="stMetricValue"] {
+            font-size: 1.3rem !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.75rem !important;
+        }
+        /* 入力フィールドを調整 */
+        .stTextInput > div > div > input {
+            font-size: 16px !important;
+            padding: 10px 12px !important;
+        }
+        /* ボタンをタップしやすく */
+        .stButton > button {
+            padding: 12px 16px !important;
+            font-size: 15px !important;
+            border-radius: 12px !important;
+            min-height: 48px !important;
+        }
+        .stDownloadButton > button {
+            min-height: 48px !important;
+            border-radius: 12px !important;
+        }
+        /* キャプションを小さく */
+        .stCaption, small, .element-container small {
+            font-size: 11px !important;
+            padding: 4px 8px !important;
+        }
+        /* データフレームを横スクロールしやすく */
+        .stDataFrame {
+            border-radius: 8px !important;
+        }
+        .stDataFrame [data-testid="stDataFrameResizable"] {
+            max-height: 300px !important;
+        }
+        /* アラートメッセージのフォント */
+        .stSuccess, .stInfo, .stWarning, .stError {
+            font-size: 0.85rem !important;
+            border-radius: 8px !important;
+        }
+        /* ラジオボタン・セレクトボックスのパディング縮小 */
+        .stRadio > div {
+            padding: 10px !important;
+            border-radius: 10px !important;
+        }
+        .stRadio > div > div > label {
+            font-size: 14px !important;
+            padding: 6px 8px !important;
+        }
+        /* エクスパンダー */
+        .streamlit-expanderHeader {
+            font-size: 0.9rem !important;
+            border-radius: 8px !important;
+        }
+        /* ディバイダー余白縮小 */
+        hr {
+            margin: 0.8rem 0 !important;
+        }
+        /* multiselect のタグを見やすく */
+        .stMultiSelect [data-baseweb="tag"] {
+            font-size: 0.8rem !important;
+        }
+    }
+    /* ===== 超小型スマホ（400px以下） ===== */
+    @media (max-width: 400px) {
+        h1 {
+            font-size: 1.2rem !important;
+        }
+        .main .block-container {
+            padding: 0.5rem 0.3rem !important;
+            border-radius: 8px !important;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.1rem !important;
+        }
+        .stButton > button {
+            font-size: 14px !important;
+            padding: 10px 12px !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1717,16 +1836,18 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         site_counts = df["サイト"].value_counts()
         site_summary = " / ".join([f"{EC_SITES[s]['icon']} {s}: {c}件" for s, c in site_counts.items() if s in EC_SITES])
         st.info(f"📊 サイト別内訳: {site_summary}")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
+    # メトリクス（2行x2列でスマホでも見やすく）
+    mcol1, mcol2 = st.columns(2)
+    with mcol1:
         st.metric("取得件数", f"{len(df)}件")
-    with col2:
+    with mcol2:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("平均価格", f"¥{df['価格'].mean():,.0f}")
-    with col3:
+    mcol3, mcol4 = st.columns(2)
+    with mcol3:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("最安値", f"¥{df['価格'].min():,.0f}")
-    with col4:
+    with mcol4:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("最高値", f"¥{df['価格'].max():,.0f}")
     st.dataframe(df, use_container_width=True, height=400)
