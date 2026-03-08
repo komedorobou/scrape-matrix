@@ -15,6 +15,36 @@ try:
     _scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
 except Exception:
     _scraper = None
+# undetected-chromedriver（ローカルChrome用）
+_uc_driver = None
+def _get_uc_driver():
+    """undetected-chromedriver のドライバーを取得（シングルトン）"""
+    global _uc_driver
+    if _uc_driver is not None:
+        return _uc_driver
+    try:
+        import undetected_chromedriver as uc
+        options = uc.ChromeOptions()
+        options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        _uc_driver = uc.Chrome(options=options, version_main=None)
+        _uc_driver.set_page_load_timeout(30)
+        return _uc_driver
+    except Exception:
+        return None
+def _fetch_with_chrome(url, timeout=30):
+    """Chromeでページを取得。成功時はHTMLテキスト、失敗時はNone"""
+    driver = _get_uc_driver()
+    if driver is None:
+        return None
+    try:
+        driver.get(url)
+        time.sleep(2)  # JSレンダリング待ち
+        return driver.page_source
+    except Exception:
+        return None
 # ページ設定
 st.set_page_config(
     page_title="ブランドECスクレイパー",
@@ -961,19 +991,44 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
         try:
-            http = _scraper if _scraper else requests
-            res = http.get(url, headers=HEADERS, timeout=30)
-            if res.status_code != 200:
+            html = None
+            method = ""
+            # 1) Chrome（undetected-chromedriver）
+            html = _fetch_with_chrome(url)
+            if html:
+                method = "Chrome"
+            # 2) cloudscraper
+            if not html and _scraper:
+                try:
+                    res = _scraper.get(url, headers=HEADERS, timeout=30)
+                    if res.status_code == 200:
+                        html = res.text
+                        method = "cloudscraper"
+                except Exception:
+                    pass
+            # 3) requests（最後の手段）
+            if not html:
+                res = requests.get(url, headers=HEADERS, timeout=30)
+                if res.status_code == 200:
+                    html = res.text
+                    method = "requests"
+                else:
+                    if progress_callback:
+                        progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
+                    break
+            if not html:
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
+                    progress_callback(f"⚠ ページ {page}: HTMLを取得できませんでした")
                 break
-            soup = BeautifulSoup(res.text, 'html.parser')
+            if progress_callback and page == 1:
+                progress_callback(f"🔧 取得方式: {method}")
+            soup = BeautifulSoup(html, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(res.text)}文字")
+                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(html)}文字")
                 break
             new_count = 0
             for card in cards:
