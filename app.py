@@ -10,22 +10,17 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys as _sys
-_UC_IMPORT_ERROR = ""
 try:
-    import undetected_chromedriver as uc
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as WaitEC
-    UC_AVAILABLE = True
-except Exception as _e:
-    UC_AVAILABLE = False
-    _UC_IMPORT_ERROR = f"{type(_e).__name__}: {_e} | Python: {_sys.executable}"
+    import cloudscraper
+    _scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+except Exception:
+    _scraper = None
 # ページ設定
 st.set_page_config(
     page_title="ブランドECスクレイパー",
     page_icon="👜",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 # viewportメタタグ（スマホでのズーム・スケール制御）
 st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">', unsafe_allow_html=True)
@@ -53,12 +48,7 @@ st.markdown("""
         white-space: nowrap !important;
         font-size: 0.9rem !important;
     }
-    /* サイドバー開閉ボタン: PCのみ非表示、スマホは表示 */
-    @media (min-width: 769px) {
-        button[kind="header"] {
-            display: none !important;
-        }
-    }
+    /* サイドバー開閉ボタン */
     /* ヘッダーバー（上部の暗い部分）を淡く */
     header[data-testid="stHeader"] {
         background: linear-gradient(135deg, rgba(200, 220, 230, 0.9), rgba(220, 200, 220, 0.9)) !important;
@@ -926,61 +916,7 @@ def trefac_get_product_detail(url):
     except Exception as e:
         return None
 # ===== セカスト用関数 =====
-_uc_driver = None
 _secondstreet_cache = {}
-def _init_uc_driver():
-    """undetected-chromedriverを初期化"""
-    global _uc_driver
-    if _uc_driver is not None:
-        try:
-            _uc_driver.quit()
-        except Exception:
-            pass
-        _uc_driver = None
-    options = uc.ChromeOptions()
-    options.add_argument("--window-position=-32000,-32000")
-    options.add_argument("--window-size=800,600")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    _uc_driver = uc.Chrome(options=options)
-    return _uc_driver
-def _get_secondstreet_page(url, wait_selector=None, retry=True):
-    """undetected-chromedriverで実Chromeブラウザを使いページHTMLを取得"""
-    global _uc_driver
-    if not UC_AVAILABLE:
-        raise Exception("undetected-chromedriver未インストール: pip install undetected-chromedriver")
-    if _uc_driver is None:
-        _init_uc_driver()
-    try:
-        _uc_driver.get(url)
-    except Exception as e:
-        if retry:
-            _init_uc_driver()
-            return _get_secondstreet_page(url, wait_selector, retry=False)
-        raise
-    if wait_selector:
-        try:
-            WebDriverWait(_uc_driver, 20).until(
-                WaitEC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
-            )
-        except Exception:
-            time.sleep(5)
-            if retry:
-                _init_uc_driver()
-                return _get_secondstreet_page(url, wait_selector, retry=False)
-    else:
-        time.sleep(3)
-    return _uc_driver.page_source
-def _close_secondstreet_browser():
-    """undetected-chromedriverを閉じる"""
-    global _uc_driver
-    try:
-        if _uc_driver:
-            _uc_driver.quit()
-    except Exception:
-        pass
-    _uc_driver = None
 def _parse_secondstreet_name(full_name):
     """商品名文字列を 商品名 / 型番 / 素材 / カラー / 商品番号 に分割"""
     if not full_name:
@@ -1015,7 +951,7 @@ def secondstreet_build_url(brand, category):
     brand_clean = brand.strip()
     return f"{base_url}/search?keyword={brand_clean}"
 def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
-    """セカスト: 検索ページから商品URL+データを一括取得（高速版）"""
+    """セカスト: 検索ページから商品URL+データを一括取得（requestsベース）"""
     global _secondstreet_cache
     _secondstreet_cache = {}
     urls = []
@@ -1025,14 +961,19 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
         if progress_callback:
             progress_callback(f"📄 ページ {page} の商品リストを取得中...")
         try:
-            html = _get_secondstreet_page(url, wait_selector=".itemCard")
-            soup = BeautifulSoup(html, 'html.parser')
+            http = _scraper if _scraper else requests
+            res = http.get(url, headers=HEADERS, timeout=30)
+            if res.status_code != 200:
+                if progress_callback:
+                    progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
+                break
+            soup = BeautifulSoup(res.text, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(html)}文字")
+                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(res.text)}文字")
                 break
             new_count = 0
             for card in cards:
@@ -1064,10 +1005,10 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                     data["素材"] = material
                 if color:
                     data["カラー"] = color
-                if model:
-                    data["品番"] = model.split(" / ")[0]
-                elif product_number:
+                if product_number:
                     data["品番"] = product_number
+                elif model:
+                    data["品番"] = model.split(" / ")[0]
                 size_el = card.select_one('.itemCard_size')
                 if size_el:
                     size_text = size_el.get_text(strip=True).replace('サイズ', '').strip()
@@ -1098,7 +1039,6 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
             if progress_callback:
                 progress_callback(f"⚠ セカスト例外: {type(e).__name__}: {str(e)[:100]}")
             break
-    _close_secondstreet_browser()
     return urls
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
@@ -1598,7 +1538,7 @@ def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
     hinban_prices = {}
     for _, row in df.iterrows():
         price = row.get("価格")
-        if pd.isna(price) or not price or float(price) <= 0:
+        if pd.isna(price) or price is None or float(price) <= 0:
             continue
         hinbans = []
         if "品番" in df.columns and pd.notna(row.get("品番")):
@@ -1702,8 +1642,6 @@ with st.sidebar:
                 max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約90件")
         else:
             max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
-    if "セカスト" in selected_sites and not UC_AVAILABLE:
-        st.error(f"⚠ セカストにはundetected-chromedriverが必要です。\n\n詳細: {_UC_IMPORT_ERROR}")
     st.divider()
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
@@ -1902,7 +1840,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
     if "サイト" in df.columns:
         filename = f"allsites_{st.session_state.brand_name}_{timestamp}.xlsx"
     else:
-        ec_name = st.session_state.selected_ec.lower().replace(" ", "")
+        ec_name = st.session_state.get("selected_ec", "result").lower().replace(" ", "")
         filename = f"{ec_name}_{st.session_state.brand_name}_{timestamp}.xlsx"
     excel_data = to_excel(df)
     st.download_button(
@@ -2159,9 +2097,7 @@ with st.expander("📖 使い方"):
     | ロエベ | `loewe` | `LOEWE` | `loewe` | `loewe` |
     ※RAGTAGは自動で大文字変換されます
     ⚠️ **セカスト利用時の注意**:
-    - Google Chrome がPCにインストールされている必要があります
-    - 初回は `setup_sekast.bat` を実行してください
-    - スクレイピング中にChromeウィンドウが自動で開きます（画面外に配置されます）
+    - 他のサイトと同様にrequestsベースで動作します
     """)
 st.divider()
 st.caption("⚠️ 利用は自己責任で。robots.txt・利用規約を確認してください。")
