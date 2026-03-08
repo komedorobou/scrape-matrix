@@ -10,15 +10,10 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys as _sys
+import subprocess as _subprocess
 _UC_IMPORT_ERROR = ""
 try:
     from playwright.sync_api import sync_playwright
-    import subprocess as _subprocess
-    # Chromiumが未インストールなら自動インストール
-    try:
-        _subprocess.run(["playwright", "install", "chromium"], capture_output=True, timeout=120)
-    except Exception:
-        pass
     UC_AVAILABLE = True
 except Exception as _e:
     UC_AVAILABLE = False
@@ -930,24 +925,49 @@ def trefac_get_product_detail(url):
         return None
 # ===== セカスト用関数 =====
 _pw_context = None  # {"playwright": ..., "browser": ..., "page": ...}
+_pw_chromium_installed = False
 _secondstreet_cache = {}
+def _ensure_chromium():
+    """Chromiumが未インストールなら1回だけインストール"""
+    global _pw_chromium_installed
+    if _pw_chromium_installed:
+        return
+    try:
+        _subprocess.run(["playwright", "install", "chromium", "--with-deps"],
+                       capture_output=True, timeout=180)
+    except Exception:
+        pass
+    _pw_chromium_installed = True
 def _init_pw_browser():
     """Playwrightブラウザを初期化"""
     global _pw_context
     _close_secondstreet_browser()
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True, args=[
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-    ])
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        viewport={"width": 1280, "height": 720},
-    )
-    page = context.new_page()
-    _pw_context = {"playwright": pw, "browser": browser, "page": page}
-    return page
+    _ensure_chromium()
+    pw = None
+    browser = None
+    try:
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(headless=True, args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+        ])
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 720},
+        )
+        page = context.new_page()
+        _pw_context = {"playwright": pw, "browser": browser, "page": page}
+        return page
+    except Exception:
+        if browser:
+            try: browser.close()
+            except Exception: pass
+        if pw:
+            try: pw.stop()
+            except Exception: pass
+        _pw_context = None
+        raise
 def _get_secondstreet_page(url, wait_selector=None, retry=True):
     """Playwrightで実Chromiumブラウザを使いページHTMLを取得"""
     global _pw_context
@@ -1067,10 +1087,10 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                     data["素材"] = material
                 if color:
                     data["カラー"] = color
-                if model:
-                    data["品番"] = model.split(" / ")[0]
-                elif product_number:
+                if product_number:
                     data["品番"] = product_number
+                elif model:
+                    data["品番"] = model.split(" / ")[0]
                 size_el = card.select_one('.itemCard_size')
                 if size_el:
                     size_text = size_el.get_text(strip=True).replace('サイズ', '').strip()
@@ -1601,7 +1621,7 @@ def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
     hinban_prices = {}
     for _, row in df.iterrows():
         price = row.get("価格")
-        if pd.isna(price) or not price or float(price) <= 0:
+        if pd.isna(price) or price is None or float(price) <= 0:
             continue
         hinbans = []
         if "品番" in df.columns and pd.notna(row.get("品番")):
@@ -1905,7 +1925,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
     if "サイト" in df.columns:
         filename = f"allsites_{st.session_state.brand_name}_{timestamp}.xlsx"
     else:
-        ec_name = st.session_state.selected_ec.lower().replace(" ", "")
+        ec_name = st.session_state.get("selected_ec", "result").lower().replace(" ", "")
         filename = f"{ec_name}_{st.session_state.brand_name}_{timestamp}.xlsx"
     excel_data = to_excel(df)
     st.download_button(
