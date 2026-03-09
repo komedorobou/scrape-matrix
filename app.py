@@ -701,6 +701,10 @@ if 'hinban_merged_df' not in st.session_state:
     st.session_state.hinban_merged_df = None
 if 'wear_catalog_cache' not in st.session_state:
     st.session_state.wear_catalog_cache = {}  # {brand: {brand_no: name}}
+if 'brand_suggest_results' not in st.session_state:
+    st.session_state.brand_suggest_results = []  # [{name, id, count}, ...]
+if 'brand_suggest_keyword' not in st.session_state:
+    st.session_state.brand_suggest_keyword = ""
 # ===== コメ兵用関数 =====
 def komehyo_build_url(brand, category):
     """コメ兵: 検索URLを構築"""
@@ -1312,6 +1316,122 @@ def _parse_secondstreet_count(html, method):
     if max_count > 0:
         return max_count, f"{method} / text:'{max_match}'(small) / title={title_text}"
     return 0, f"{method} / HTML={len(html)}文字 / title={title_text} / 何も見つからず"
+
+def _fetch_secondstreet_html(url, scraper_api_key=""):
+    """セカスト: URLからHTMLを取得（共通フォールバック）"""
+    html = None
+    if scraper_api_key:
+        try:
+            api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
+                       f"&url={url}&render=true&wait=5000")
+            res = requests.get(api_url, timeout=90)
+            if res.status_code == 200:
+                html = res.text
+        except Exception:
+            pass
+        if not html:
+            try:
+                api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
+                           f"&url={url}&render=false")
+                res = requests.get(api_url, timeout=60)
+                if res.status_code == 200:
+                    html = res.text
+            except Exception:
+                pass
+    if not html:
+        html = _fetch_with_chrome(url)
+    if not html:
+        html = _fetch_with_curl(url)
+    if not html and _scraper:
+        try:
+            res = _scraper.get(url, headers=HEADERS, timeout=15)
+            if res.status_code == 200:
+                html = res.text
+        except Exception:
+            pass
+    if not html:
+        try:
+            ss = _get_secondstreet_session()
+            res = ss.get(url, timeout=30)
+            if res.status_code == 200:
+                html = res.text
+        except Exception:
+            pass
+    return html
+
+def _suggest_brands_secondstreet(keyword, scraper_api_key=""):
+    """セカスト: ブランド名サジェスト（検索ページのブランドフィルタから取得）"""
+    if not keyword or len(keyword) < 2:
+        return []
+    url = f"https://www.2ndstreet.jp/search?keyword={keyword.strip()}"
+    html = _fetch_secondstreet_html(url, scraper_api_key)
+    if not html:
+        return []
+    soup = BeautifulSoup(html, 'html.parser')
+    brands = []
+    # 1) __NUXT__ / script JSON内のブランドデータを探す
+    for script in soup.select('script'):
+        text = script.string or ""
+        # brandName/brandId パターン
+        for m in re.finditer(
+            r'\{[^{}]*"brandName"\s*:\s*"([^"]+)"[^{}]*"brandId"\s*:\s*"?(\d+)"?[^{}]*\}',
+            text
+        ):
+            name, bid = m.group(1), m.group(2)
+            # 件数も取れたら取得
+            count_m = re.search(r'"count"\s*:\s*(\d+)', m.group(0))
+            count = int(count_m.group(1)) if count_m else None
+            brands.append({"name": name, "id": bid, "count": count})
+        # brand配列パターン（逆順: id, name）
+        for m in re.finditer(
+            r'\{[^{}]*"id"\s*:\s*"?(\d+)"?[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*\}',
+            text
+        ):
+            bid, name = m.group(1), m.group(2)
+            count_m = re.search(r'"count"\s*:\s*(\d+)', m.group(0))
+            count = int(count_m.group(1)) if count_m else None
+            if name.lower() != keyword.lower():  # 完全一致のみ除外はしない
+                brands.append({"name": name, "id": bid, "count": count})
+    # 2) HTMLのブランドフィルタ要素から取得
+    for el in soup.select('[class*="brand"] a, [class*="Brand"] a, [data-brand] a'):
+        text = el.get_text(strip=True)
+        m = re.match(r'(.+?)\s*[（(](\d+)[)）]', text)
+        if m:
+            name, count = m.group(1), int(m.group(2))
+        else:
+            name, count = text, None
+        href = el.get('href', '')
+        bid_m = re.search(r'brand(?:\[\])?=(\d+)', href)
+        bid = bid_m.group(1) if bid_m else ""
+        if name:
+            brands.append({"name": name, "id": bid, "count": count})
+    # 3) チェックボックス形式のブランドフィルタ
+    for el in soup.select('input[name*="brand"]'):
+        bid = el.get('value', '')
+        label_el = el.find_next('label') or el.find_parent('label')
+        if label_el:
+            text = label_el.get_text(strip=True)
+            m = re.match(r'(.+?)\s*[（(](\d+)[)）]', text)
+            if m:
+                name, count = m.group(1), int(m.group(2))
+            else:
+                name, count = text, None
+            if name and bid:
+                brands.append({"name": name, "id": bid, "count": count})
+    # 重複排除（name基準）
+    seen = set()
+    unique = []
+    for b in brands:
+        key = b["name"].lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(b)
+    # キーワードでフィルタ（部分一致）
+    kw = keyword.lower()
+    filtered = [b for b in unique if kw in b["name"].lower()]
+    # 件数降順ソート
+    filtered.sort(key=lambda b: b["count"] or 0, reverse=True)
+    return filtered
 
 def _check_count_secondstreet(brand, category, scraper_api_key=""):
     """セカスト: 検索結果件数を概算取得（本体と同じフォールバック順）"""
@@ -1988,6 +2108,24 @@ with st.sidebar:
             categories = RAGTAG_CATEGORIES
         elif selected_ec == "セカスト":
             st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe")
+            # ブランドサジェスト機能（全候補一括検索）
+            suggest_btn = st.button("🔍 ブランド候補を検索", key="brand_suggest_btn",
+                                    use_container_width=True,
+                                    help="入力中のブランド名でセカストのブランド候補を取得し、全候補を一括スクレイピングできます")
+            if suggest_btn and brand_input and len(brand_input) >= 2:
+                scraper_key = st.session_state.get("scraper_api_key", "")
+                with st.spinner("🔍 ブランド候補を検索中..."):
+                    results = _suggest_brands_secondstreet(brand_input, scraper_key)
+                st.session_state.brand_suggest_results = results
+                st.session_state.brand_suggest_keyword = brand_input
+            if (st.session_state.brand_suggest_results
+                    and st.session_state.brand_suggest_keyword.lower() in brand_input.lower()):
+                suggestions = st.session_state.brand_suggest_results
+                st.markdown(f"**🏷️ ブランド候補（{len(suggestions)}件）**")
+                for b in suggestions:
+                    count_str = f"（{b['count']}件）" if b.get('count') else ""
+                    st.caption(f"ブランド： {b['name']} {count_str}")
+                st.info(f"🔍 スクレイピング開始で上記 {len(suggestions)} ブランドを全て一括検索します")
             categories = SECONDSTREET_CATEGORIES
         else:
             st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe")
@@ -2055,6 +2193,11 @@ if count_button:
     elif not selected_sites:
         st.warning("⚠️ サイトを1つ以上選択してください")
     else:
+        # セカスト用サジェスト候補
+        _ss_suggest = []
+        if (st.session_state.brand_suggest_results
+                and st.session_state.brand_suggest_keyword.lower() in brand_input.lower()):
+            _ss_suggest = [b["name"] for b in st.session_state.brand_suggest_results]
         with st.spinner("📊 件数を確認中..."):
             _cat = category if len(selected_sites) == 1 else ""
             count_results = check_product_counts(brand_input, _cat, selected_sites)
@@ -2077,6 +2220,22 @@ if count_button:
                     st.error(f"{icon} **{site_name}**: 取得失敗")
                     if debug_msg:
                         st.warning(f"🔧 デバッグ: {debug_msg}")
+        # セカスト＋サジェスト候補がある場合、各ブランド個別の件数も表示
+        if "セカスト" in selected_sites and len(_ss_suggest) > 1:
+            scraper_key = st.session_state.get("scraper_api_key", "")
+            st.markdown("---")
+            st.markdown("**🔴 セカスト ブランド別内訳**")
+            brand_total = 0
+            for bname in _ss_suggest:
+                with st.spinner(f"🔴 {bname} の件数を確認中..."):
+                    cnt, burl, dbg = _check_count_secondstreet(bname, _cat, scraper_key)
+                if cnt and cnt > 0:
+                    brand_total += cnt
+                    st.caption(f"  {bname}: 約 **{cnt:,}件**")
+                else:
+                    st.caption(f"  {bname}: 0件")
+            if brand_total > 0:
+                st.success(f"🔴 **セカスト合計（全ブランド）**: 約 **{brand_total:,}件**")
         if total > 0:
             st.success(f"📦 合計: 約 **{total:,}件**（概算）")
 # メイン処理
@@ -2099,6 +2258,40 @@ if scrape_button:
             get_urls_func = ragtag_get_product_urls
             get_detail_func = ragtag_get_product_detail
         elif selected_ec == "セカスト":
+            # ブランドサジェスト候補がある場合は全候補を一括検索
+            _ss_brands = []
+            if (st.session_state.brand_suggest_results
+                    and st.session_state.brand_suggest_keyword.lower() in brand_input.lower()):
+                _ss_brands = [b["name"] for b in st.session_state.brand_suggest_results]
+            if len(_ss_brands) > 1:
+                # 複数ブランド一括検索
+                all_results = []
+                total_brands = len(_ss_brands)
+                overall_progress = st.progress(0)
+                for bi, bname in enumerate(_ss_brands):
+                    status_text.text(f"🔴 [{bi+1}/{total_brands}] ブランド「{bname}」を検索中...")
+                    overall_progress.progress(bi / total_brands)
+                    burl = secondstreet_build_url(bname, category)
+                    purls = secondstreet_get_product_urls(burl, max_pages, lambda msg: status_text.text(f"🔴 {bname}: {msg}"))
+                    if purls:
+                        st.info(f"🔴 **{bname}**: {len(purls)}件発見")
+                        brand_results = [secondstreet_get_product_detail(u) for u in purls]
+                        brand_results = [r for r in brand_results if r]
+                        all_results.extend(brand_results)
+                overall_progress.progress(1.0)
+                status_text.text("✅ 完了！")
+                progress_bar.progress(1.0)
+                if all_results:
+                    df = pd.DataFrame(all_results)
+                    columns = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                    df = df[[c for c in columns if c in df.columns]]
+                    st.session_state.results_df = df
+                    st.session_state.brand_name = brand_input
+                    st.session_state.scraping_done = True
+                    st.rerun()
+                else:
+                    st.warning("⚠️ どのブランドからも商品を取得できませんでした")
+                st.stop()
             base_url = secondstreet_build_url(brand_input, category)
             get_urls_func = secondstreet_get_product_urls
             get_detail_func = secondstreet_get_product_detail
@@ -2186,12 +2379,35 @@ if scrape_button:
         all_results = []
         overall_progress = st.progress(0)
         overall_status = st.empty()
+        # セカスト用ブランドサジェスト候補
+        _ss_suggest_brands = []
+        if (st.session_state.brand_suggest_results
+                and st.session_state.brand_suggest_keyword.lower() in brand_input.lower()):
+            _ss_suggest_brands = [b["name"] for b in st.session_state.brand_suggest_results]
         for site_idx, (site_name, config) in enumerate(targets):
             site_icon = config["icon"]
             overall_status.text(f"{site_icon} [{site_idx+1}/{total_sites}] {site_name} をスクレイピング中...")
             overall_progress.progress(site_idx / total_sites)
             site_progress = st.progress(0)
             site_status = st.empty()
+            # セカスト＋サジェスト候補がある場合は全候補を検索
+            if site_name == "セカスト" and len(_ss_suggest_brands) > 1:
+                results = []
+                for bi, bname in enumerate(_ss_suggest_brands):
+                    site_status.text(f"🔴 [{bi+1}/{len(_ss_suggest_brands)}] ブランド「{bname}」を検索中...")
+                    site_progress.progress(bi / len(_ss_suggest_brands))
+                    burl = config["build_url"](bname)
+                    purls = config["get_urls"](burl, max_pages, lambda msg, _s=site_status, _n=bname: _s.text(f"🔴 {_n}: {msg}"))
+                    if purls:
+                        brand_results = [config["get_detail"](u) for u in purls]
+                        brand_results = [r for r in brand_results if r]
+                        results.extend(brand_results)
+                site_progress.progress(1.0)
+                for r in results:
+                    r["サイト"] = site_name
+                all_results.extend(results)
+                site_status.text(f"✅ {site_name}: {len(results)}件取得完了（{len(_ss_suggest_brands)}ブランド）")
+                continue
             base_url = config["build_url"](brand_input)
             site_status.text(f"🔗 {site_name}: {base_url}")
             def update_site_status(msg, _status=site_status, _icon=site_icon, _name=site_name):
