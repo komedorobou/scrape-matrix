@@ -904,8 +904,10 @@ def trefac_build_url(brand, category):
     """トレファク: 検索URLを構築"""
     base_url = EC_SITES["トレファク"]["base_url"]
     brand_clean = brand.strip()
-    tcpsb = f"{category}cpsb" if category else "tcpsb"
-    return f"{base_url}/store/{tcpsb}/?srchword={brand_clean}"
+    if category:
+        return f"{base_url}/store/{category}cpsb/?srchword={brand_clean}"
+    else:
+        return f"{base_url}/store/search_result.html?srchword={brand_clean}"
 def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
     """トレファク: 商品URLを全ページから取得"""
     urls = []
