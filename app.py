@@ -532,6 +532,14 @@ st.markdown("""
         .stMultiSelect [data-baseweb="tag"] {
             font-size: 0.85rem !important;
             padding: 4px 8px !important;
+            background-color: #F0F2F6 !important;
+            color: #31333F !important;
+        }
+        .stMultiSelect [data-baseweb="tag"] span {
+            color: #31333F !important;
+        }
+        .stMultiSelect [data-baseweb="tag"] svg {
+            color: #31333F !important;
         }
         /* キャプションを小さく */
         .stCaption, small, .element-container small {
