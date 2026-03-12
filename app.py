@@ -529,16 +529,30 @@ st.markdown("""
             font-size: 16px !important;
         }
         /* multiselect のタグを見やすく */
-        .stMultiSelect [data-baseweb="tag"] {
+        .stMultiSelect [data-baseweb="tag"],
+        .stMultiSelect [data-baseweb="tag"][class*="st-"],
+        div[data-baseweb="tag"] {
             font-size: 0.85rem !important;
             padding: 4px 8px !important;
-            background-color: #F0F2F6 !important;
+            background-color: #E8EAF0 !important;
+            color: #31333F !important;
+            border-radius: 6px !important;
+        }
+        .stMultiSelect [data-baseweb="tag"] span,
+        div[data-baseweb="tag"] span {
             color: #31333F !important;
         }
-        .stMultiSelect [data-baseweb="tag"] span {
+        .stMultiSelect [data-baseweb="tag"] svg,
+        div[data-baseweb="tag"] svg {
+            color: #555 !important;
+            fill: #555 !important;
+        }
+        /* BaseWebインラインスタイル上書き */
+        span[data-baseweb="tag"] {
+            background-color: #E8EAF0 !important;
             color: #31333F !important;
         }
-        .stMultiSelect [data-baseweb="tag"] svg {
+        span[data-baseweb="tag"] > span:first-child {
             color: #31333F !important;
         }
         /* キャプションを小さく */
