@@ -529,9 +529,31 @@ st.markdown("""
             font-size: 16px !important;
         }
         /* multiselect のタグを見やすく */
-        .stMultiSelect [data-baseweb="tag"] {
+        .stMultiSelect [data-baseweb="tag"],
+        .stMultiSelect [data-baseweb="tag"][class*="st-"],
+        div[data-baseweb="tag"] {
             font-size: 0.85rem !important;
             padding: 4px 8px !important;
+            background-color: #E8EAF0 !important;
+            color: #31333F !important;
+            border-radius: 6px !important;
+        }
+        .stMultiSelect [data-baseweb="tag"] span,
+        div[data-baseweb="tag"] span {
+            color: #31333F !important;
+        }
+        .stMultiSelect [data-baseweb="tag"] svg,
+        div[data-baseweb="tag"] svg {
+            color: #555 !important;
+            fill: #555 !important;
+        }
+        /* BaseWebインラインスタイル上書き */
+        span[data-baseweb="tag"] {
+            background-color: #E8EAF0 !important;
+            color: #31333F !important;
+        }
+        span[data-baseweb="tag"] > span:first-child {
+            color: #31333F !important;
         }
         /* キャプションを小さく */
         .stCaption, small, .element-container small {
@@ -904,8 +926,10 @@ def trefac_build_url(brand, category):
     """トレファク: 検索URLを構築"""
     base_url = EC_SITES["トレファク"]["base_url"]
     brand_clean = brand.strip()
-    tcpsb = f"{category}cpsb" if category else "tcpsb"
-    return f"{base_url}/store/{tcpsb}/?srchword={brand_clean}"
+    if category:
+        return f"{base_url}/store/{category}cpsb/?srchword={brand_clean}"
+    else:
+        return f"{base_url}/store/search_result.html?srchword={brand_clean}"
 def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
     """トレファク: 商品URLを全ページから取得"""
     urls = []
@@ -945,10 +969,19 @@ def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
         except Exception as e:
             break
     return urls
+_trefac_session = None
+def _get_trefac_session():
+    global _trefac_session
+    if _trefac_session is None:
+        _trefac_session = requests.Session()
+        _trefac_session.headers.update(HEADERS)
+    return _trefac_session
+
 def trefac_get_product_detail(url):
     """トレファク: 商品詳細を取得"""
     try:
-        res = requests.get(url, headers=HEADERS, timeout=30)
+        ss = _get_trefac_session()
+        res = ss.get(url, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
         data = {"URL": url}
         # 価格
@@ -1191,7 +1224,10 @@ def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callba
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(get_detail_func, url): url for url in urls}
         for future in as_completed(futures):
-            data = future.result()
+            try:
+                data = future.result()
+            except Exception:
+                data = None
             if data:
                 results.append(data)
             completed += 1
@@ -1558,14 +1594,19 @@ def check_product_counts(brand, category, selected_sites):
 def to_excel(df):
     """DataFrameをExcelバイナリに変換（サイト列がある場合はシート分割）"""
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        if "サイト" in df.columns:
-            df.to_excel(writer, index=False, sheet_name='全サイト')
-            for site_name in df["サイト"].unique():
-                site_df = df[df["サイト"] == site_name].drop(columns=["サイト"])
-                sheet_name = site_name[:31]
-                site_df.to_excel(writer, index=False, sheet_name=sheet_name)
-        else:
+    try:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            if "サイト" in df.columns:
+                df.to_excel(writer, index=False, sheet_name='全サイト')
+                for site_name in df["サイト"].unique():
+                    site_df = df[df["サイト"] == site_name].drop(columns=["サイト"])
+                    sheet_name = site_name[:31]
+                    site_df.to_excel(writer, index=False, sheet_name=sheet_name)
+            else:
+                df.to_excel(writer, index=False, sheet_name='データ')
+    except Exception:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='データ')
     return output.getvalue()
 # ===== 品番→正式名称取得用関数（v2: ローカル優先 + Web検索補完） =====
@@ -2302,44 +2343,47 @@ if scrape_button:
         status_text.text(f"🔗 URL: {base_url}")
         def update_status(msg):
             status_text.text(msg)
-        product_urls = get_urls_func(base_url, max_pages, update_status)
-        if not product_urls:
-            st.error("❌ 商品が見つかりませんでした。ブランド名を確認してください。")
-            st.info(f"試したURL: {base_url}")
-        else:
-            st.info(f"📦 {len(product_urls)}件の商品を発見")
-            if selected_ec == "セカスト":
-                status_text.text("📦 データを整理中...")
-                results = [get_detail_func(url) for url in product_urls]
-                results = [r for r in results if r]
-            elif selected_ec in ["RAGTAG", "トレファク"]:
-                status_text.text("🚀 並列処理で詳細取得中...")
-                def update_progress(completed, total):
-                    progress_bar.progress(completed / total)
-                    status_text.text(f"🚀 [{completed}/{total}] 並列取得中...")
-                results = get_products_parallel(product_urls, get_detail_func, max_workers=10, progress_callback=update_progress)
+        try:
+            product_urls = get_urls_func(base_url, max_pages, update_status)
+            if not product_urls:
+                st.error("❌ 商品が見つかりませんでした。ブランド名を確認してください。")
+                st.info(f"試したURL: {base_url}")
             else:
-                results = []
-                total = len(product_urls)
-                for i, url in enumerate(product_urls):
-                    status_text.text(f"🔄 [{i+1}/{total}] 商品詳細を取得中...")
-                    progress_bar.progress((i + 1) / total)
-                    data = get_detail_func(url)
-                    if data:
-                        results.append(data)
-                    time.sleep(random.uniform(0.3, 0.7))
-            status_text.text("✅ 完了！")
-            progress_bar.progress(1.0)
-            if results:
-                df = pd.DataFrame(results)
-                columns = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
-                df = df[[c for c in columns if c in df.columns]]
-                st.session_state.results_df = df
-                st.session_state.brand_name = brand_input
-                st.session_state.scraping_done = True
-                st.rerun()
-            else:
-                st.warning("⚠️ 商品詳細の取得に失敗しました")
+                st.info(f"📦 {len(product_urls)}件の商品を発見")
+                if selected_ec == "セカスト":
+                    status_text.text("📦 データを整理中...")
+                    results = [get_detail_func(url) for url in product_urls]
+                    results = [r for r in results if r]
+                elif selected_ec in ["RAGTAG", "トレファク"]:
+                    status_text.text("🚀 並列処理で詳細取得中...")
+                    def update_progress(completed, total):
+                        progress_bar.progress(completed / total)
+                        status_text.text(f"🚀 [{completed}/{total}] 並列取得中...")
+                    results = get_products_parallel(product_urls, get_detail_func, max_workers=10, progress_callback=update_progress)
+                else:
+                    results = []
+                    total = len(product_urls)
+                    for i, url in enumerate(product_urls):
+                        status_text.text(f"🔄 [{i+1}/{total}] 商品詳細を取得中...")
+                        progress_bar.progress((i + 1) / total)
+                        data = get_detail_func(url)
+                        if data:
+                            results.append(data)
+                        time.sleep(random.uniform(0.3, 0.7))
+                status_text.text("✅ 完了！")
+                progress_bar.progress(1.0)
+                if results:
+                    df = pd.DataFrame(results)
+                    columns = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                    df = df[[c for c in columns if c in df.columns]]
+                    st.session_state.results_df = df
+                    st.session_state.brand_name = brand_input
+                    st.session_state.scraping_done = True
+                    st.rerun()
+                else:
+                    st.warning("⚠️ 商品詳細の取得に失敗しました")
+        except Exception as e:
+            st.error(f"⚠️ スクレイピング中にエラーが発生しました: {e}")
     else:
         # ===== 複数サイト =====
         _cat = category
@@ -2385,63 +2429,67 @@ if scrape_button:
                 and st.session_state.brand_suggest_keyword.lower() in brand_input.lower()):
             _ss_suggest_brands = [b["name"] for b in st.session_state.brand_suggest_results]
         for site_idx, (site_name, config) in enumerate(targets):
-            site_icon = config["icon"]
-            overall_status.text(f"{site_icon} [{site_idx+1}/{total_sites}] {site_name} をスクレイピング中...")
-            overall_progress.progress(site_idx / total_sites)
-            site_progress = st.progress(0)
-            site_status = st.empty()
-            # セカスト＋サジェスト候補がある場合は全候補を検索
-            if site_name == "セカスト" and len(_ss_suggest_brands) > 1:
-                results = []
-                for bi, bname in enumerate(_ss_suggest_brands):
-                    site_status.text(f"🔴 [{bi+1}/{len(_ss_suggest_brands)}] ブランド「{bname}」を検索中...")
-                    site_progress.progress(bi / len(_ss_suggest_brands))
-                    burl = config["build_url"](bname)
-                    purls = config["get_urls"](burl, max_pages, lambda msg, _s=site_status, _n=bname: _s.text(f"🔴 {_n}: {msg}"))
-                    if purls:
-                        brand_results = [config["get_detail"](u) for u in purls]
-                        brand_results = [r for r in brand_results if r]
-                        results.extend(brand_results)
-                site_progress.progress(1.0)
+            try:
+                site_icon = config["icon"]
+                overall_status.text(f"{site_icon} [{site_idx+1}/{total_sites}] {site_name} をスクレイピング中...")
+                overall_progress.progress(site_idx / total_sites)
+                site_progress = st.progress(0)
+                site_status = st.empty()
+                # セカスト＋サジェスト候補がある場合は全候補を検索
+                if site_name == "セカスト" and len(_ss_suggest_brands) > 1:
+                    results = []
+                    for bi, bname in enumerate(_ss_suggest_brands):
+                        site_status.text(f"🔴 [{bi+1}/{len(_ss_suggest_brands)}] ブランド「{bname}」を検索中...")
+                        site_progress.progress(bi / len(_ss_suggest_brands))
+                        burl = config["build_url"](bname)
+                        purls = config["get_urls"](burl, max_pages, lambda msg, _s=site_status, _n=bname: _s.text(f"🔴 {_n}: {msg}"))
+                        if purls:
+                            brand_results = [config["get_detail"](u) for u in purls]
+                            brand_results = [r for r in brand_results if r]
+                            results.extend(brand_results)
+                    site_progress.progress(1.0)
+                    for r in results:
+                        r["サイト"] = site_name
+                    all_results.extend(results)
+                    site_status.text(f"✅ {site_name}: {len(results)}件取得完了（{len(_ss_suggest_brands)}ブランド）")
+                    continue
+                base_url = config["build_url"](brand_input)
+                site_status.text(f"🔗 {site_name}: {base_url}")
+                def update_site_status(msg, _status=site_status, _icon=site_icon, _name=site_name):
+                    _status.text(f"{_icon} {_name}: {msg}")
+                product_urls = config["get_urls"](base_url, max_pages, update_site_status)
+                if not product_urls:
+                    site_status.text(f"⚠️ {site_name}: 商品が見つかりませんでした")
+                    site_progress.progress(1.0)
+                    continue
+                site_status.text(f"📦 {site_name}: {len(product_urls)}件の商品を発見")
+                if config.get("cached"):
+                    site_status.text(f"{site_icon} {site_name}: データ整理中...")
+                    results = [config["get_detail"](url) for url in product_urls]
+                    results = [r for r in results if r]
+                elif config["parallel"]:
+                    def update_site_progress(completed, total, _bar=site_progress, _status=site_status, _name=site_name, _icon=site_icon):
+                        _bar.progress(completed / total)
+                        _status.text(f"{_icon} {_name}: [{completed}/{total}] 並列取得中...")
+                    results = get_products_parallel(product_urls, config["get_detail"], max_workers=10, progress_callback=update_site_progress)
+                else:
+                    results = []
+                    total = len(product_urls)
+                    for i, url in enumerate(product_urls):
+                        site_status.text(f"{site_icon} {site_name}: [{i+1}/{total}] 取得中...")
+                        site_progress.progress((i + 1) / total)
+                        data = config["get_detail"](url)
+                        if data:
+                            results.append(data)
+                        time.sleep(random.uniform(0.3, 0.7))
                 for r in results:
                     r["サイト"] = site_name
                 all_results.extend(results)
-                site_status.text(f"✅ {site_name}: {len(results)}件取得完了（{len(_ss_suggest_brands)}ブランド）")
-                continue
-            base_url = config["build_url"](brand_input)
-            site_status.text(f"🔗 {site_name}: {base_url}")
-            def update_site_status(msg, _status=site_status, _icon=site_icon, _name=site_name):
-                _status.text(f"{_icon} {_name}: {msg}")
-            product_urls = config["get_urls"](base_url, max_pages, update_site_status)
-            if not product_urls:
-                site_status.text(f"⚠️ {site_name}: 商品が見つかりませんでした")
+                site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
                 site_progress.progress(1.0)
+            except Exception as e:
+                st.error(f"⚠️ {site_name} のスクレイピング中にエラーが発生しました: {e}")
                 continue
-            site_status.text(f"📦 {site_name}: {len(product_urls)}件の商品を発見")
-            if config.get("cached"):
-                site_status.text(f"{site_icon} {site_name}: データ整理中...")
-                results = [config["get_detail"](url) for url in product_urls]
-                results = [r for r in results if r]
-            elif config["parallel"]:
-                def update_site_progress(completed, total, _bar=site_progress, _status=site_status, _name=site_name, _icon=site_icon):
-                    _bar.progress(completed / total)
-                    _status.text(f"{_icon} {_name}: [{completed}/{total}] 並列取得中...")
-                results = get_products_parallel(product_urls, config["get_detail"], max_workers=10, progress_callback=update_site_progress)
-            else:
-                results = []
-                total = len(product_urls)
-                for i, url in enumerate(product_urls):
-                    site_status.text(f"{site_icon} {site_name}: [{i+1}/{total}] 取得中...")
-                    site_progress.progress((i + 1) / total)
-                    data = config["get_detail"](url)
-                    if data:
-                        results.append(data)
-                    time.sleep(random.uniform(0.3, 0.7))
-            for r in results:
-                r["サイト"] = site_name
-            all_results.extend(results)
-            site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
-            site_progress.progress(1.0)
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
         if all_results:
