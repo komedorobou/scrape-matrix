@@ -947,10 +947,19 @@ def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
         except Exception as e:
             break
     return urls
+_trefac_session = None
+def _get_trefac_session():
+    global _trefac_session
+    if _trefac_session is None:
+        _trefac_session = requests.Session()
+        _trefac_session.headers.update(HEADERS)
+    return _trefac_session
+
 def trefac_get_product_detail(url):
     """トレファク: 商品詳細を取得"""
     try:
-        res = requests.get(url, headers=HEADERS, timeout=30)
+        ss = _get_trefac_session()
+        res = ss.get(url, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
         data = {"URL": url}
         # 価格
@@ -2397,8 +2406,8 @@ if scrape_button:
         if (st.session_state.brand_suggest_results
                 and st.session_state.brand_suggest_keyword.lower() in brand_input.lower()):
             _ss_suggest_brands = [b["name"] for b in st.session_state.brand_suggest_results]
-        try:
-            for site_idx, (site_name, config) in enumerate(targets):
+        for site_idx, (site_name, config) in enumerate(targets):
+            try:
                 site_icon = config["icon"]
                 overall_status.text(f"{site_icon} [{site_idx+1}/{total_sites}] {site_name} をスクレイピング中...")
                 overall_progress.progress(site_idx / total_sites)
@@ -2456,8 +2465,9 @@ if scrape_button:
                 all_results.extend(results)
                 site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
                 site_progress.progress(1.0)
-        except Exception as e:
-            st.error(f"⚠️ {site_name} のスクレイピング中にエラーが発生しました: {e}")
+            except Exception as e:
+                st.error(f"⚠️ {site_name} のスクレイピング中にエラーが発生しました: {e}")
+                continue
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
         if all_results:
