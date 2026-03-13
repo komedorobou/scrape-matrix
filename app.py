@@ -528,33 +528,34 @@ st.markdown("""
             min-height: 44px !important;
             font-size: 16px !important;
         }
-        /* multiselect のタグを見やすく */
+        /* multiselect のタグを白背景に */
         .stMultiSelect [data-baseweb="tag"],
         .stMultiSelect [data-baseweb="tag"][class*="st-"],
-        div[data-baseweb="tag"] {
+        div[data-baseweb="tag"],
+        span[data-baseweb="tag"],
+        [data-baseweb="tag"][style],
+        .stMultiSelect span[data-baseweb="tag"],
+        section[data-testid="stSidebar"] [data-baseweb="tag"],
+        section[data-testid="stSidebar"] span[data-baseweb="tag"] {
             font-size: 0.85rem !important;
             padding: 4px 8px !important;
+            background: #FFFFFF !important;
             background-color: #FFFFFF !important;
             color: #31333F !important;
             border-radius: 6px !important;
             border: 1px solid #D0D0D0 !important;
         }
         .stMultiSelect [data-baseweb="tag"] span,
-        div[data-baseweb="tag"] span {
+        div[data-baseweb="tag"] span,
+        span[data-baseweb="tag"] span,
+        [data-baseweb="tag"] span {
             color: #31333F !important;
         }
         .stMultiSelect [data-baseweb="tag"] svg,
-        div[data-baseweb="tag"] svg {
+        div[data-baseweb="tag"] svg,
+        [data-baseweb="tag"] svg {
             color: #555 !important;
             fill: #555 !important;
-        }
-        /* BaseWebインラインスタイル上書き */
-        span[data-baseweb="tag"] {
-            background-color: #FFFFFF !important;
-            color: #31333F !important;
-        }
-        span[data-baseweb="tag"] > span:first-child {
-            color: #31333F !important;
         }
         /* キャプションを小さく */
         .stCaption, small, .element-container small {
