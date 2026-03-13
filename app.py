@@ -9,6 +9,7 @@ import numpy as np
 from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import sys as _sys
 try:
     import cloudscraper
@@ -747,17 +748,25 @@ def komehyo_build_url(brand, category):
     else:
         return f"{base_url}/{brand_clean}/"
 def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
-    """コメ兵: 商品URLを全ページから取得"""
+    """コメ兵: 商品URLを全ページから取得（リトライ付き）"""
     urls = []
     page = 1
+    consecutive_errors = 0
     while page <= max_pages:
         url = f"{base_url}?page={page}"
         if progress_callback:
-            progress_callback(f"📄 ページ {page} の商品リストを取得中...")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
-                break
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    if progress_callback:
+                        progress_callback(f"⚠ 3回連続エラーで中断 / {len(urls)}件取得済み")
+                    break
+                page += 1
+                time.sleep(1)
+                continue
             soup = BeautifulSoup(res.text, 'html.parser')
             links = soup.select('a[href*="/product/"]')
             new_urls = []
@@ -774,10 +783,17 @@ def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
             urls = list(set(urls))
             if len(urls) == before_count:
                 break
+            consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
         except Exception as e:
-            break
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                if progress_callback:
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み")
+                break
+            page += 1
+            time.sleep(2)
     return urls
 def komehyo_get_product_detail(url):
     """コメ兵: 商品詳細を取得"""
@@ -833,18 +849,26 @@ def ragtag_build_url(brand, category):
     brand_clean = brand.upper().strip().replace(" ", "")
     return f"{base_url}/search?fr={brand_clean}"
 def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
-    """RAGTAG: 商品URLを全ページから取得"""
+    """RAGTAG: 商品URLを全ページから取得（リトライ付き）"""
     urls = []
     page = 1
+    consecutive_errors = 0
     while page <= max_pages:
         # ページネーション: &page=2, &page=3...
         url = f"{base_url}&page={page}" if page > 1 else base_url
         if progress_callback:
-            progress_callback(f"📄 ページ {page} の商品リストを取得中...")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
-                break
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    if progress_callback:
+                        progress_callback(f"⚠ 3回連続エラーで中断 / {len(urls)}件取得済み")
+                    break
+                page += 1
+                time.sleep(1)
+                continue
             soup = BeautifulSoup(res.text, 'html.parser')
             # RAGTAGの商品リンクを取得（/item/ を含むリンク）
             all_links = soup.find_all('a', href=True)
@@ -867,10 +891,17 @@ def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
             urls = list(set(urls))
             if len(urls) == before_count:
                 break
+            consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
         except Exception as e:
-            break
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                if progress_callback:
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み")
+                break
+            page += 1
+            time.sleep(2)
     return urls
 def ragtag_get_product_detail(url):
     """RAGTAG: 商品詳細を取得"""
@@ -941,18 +972,26 @@ def trefac_build_url(brand, category):
     else:
         return f"{base_url}/store/search_result.html?srchword={brand_clean}"
 def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
-    """トレファク: 商品URLを全ページから取得"""
+    """トレファク: 商品URLを全ページから取得（リトライ付き）"""
     urls = []
     page = 1
+    consecutive_errors = 0
     while page <= max_pages:
         separator = "&" if "?" in base_url else "?"
         url = f"{base_url}{separator}key={page}"
         if progress_callback:
-            progress_callback(f"📄 ページ {page} の商品リストを取得中...")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
             if res.status_code != 200:
-                break
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    if progress_callback:
+                        progress_callback(f"⚠ 3回連続エラー（HTTP {res.status_code}）で中断 / {len(urls)}件取得済み")
+                    break
+                page += 1
+                time.sleep(1)
+                continue
             soup = BeautifulSoup(res.text, 'html.parser')
             all_links = soup.find_all('a', href=True)
             new_urls = []
@@ -974,10 +1013,19 @@ def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
             urls = list(set(urls))
             if len(urls) == before_count:
                 break
+            consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
         except Exception as e:
-            break
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                if progress_callback:
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み")
+                break
+            if progress_callback:
+                progress_callback(f"⚠ ページ {page} エラー: {type(e).__name__}（リトライ）")
+            page += 1
+            time.sleep(2)
     return urls
 _trefac_session = None
 def _get_trefac_session():
@@ -987,11 +1035,26 @@ def _get_trefac_session():
         _trefac_session.headers.update(HEADERS)
     return _trefac_session
 
+# スレッドローカルセッション（並列処理用：スレッドごとにコネクション再利用）
+_trefac_thread_local = threading.local()
+def _get_trefac_thread_session():
+    """スレッドごとのrequests.Sessionを取得（コネクション再利用で高速化）"""
+    if not hasattr(_trefac_thread_local, 'session'):
+        s = requests.Session()
+        s.headers.update(HEADERS)
+        # コネクションプールサイズを拡大
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
+        s.mount('https://', adapter)
+        s.mount('http://', adapter)
+        _trefac_thread_local.session = s
+    return _trefac_thread_local.session
+
 def trefac_get_product_detail(url):
-    """トレファク: 商品詳細を取得（並列呼び出し対応）"""
+    """トレファク: 商品詳細を取得（並列呼び出し対応・スレッドローカルSession）"""
     try:
-        # 並列処理でShared Sessionはスレッドセーフではないため、直接requests.getを使用
-        res = requests.get(url, headers=HEADERS, timeout=30)
+        # スレッドローカルSessionでコネクション再利用（5000件で大幅高速化）
+        ss = _get_trefac_thread_session()
+        res = ss.get(url, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
         data = {"URL": url}
         # 価格
@@ -1080,15 +1143,16 @@ def secondstreet_build_url(brand, category):
     brand_clean = brand.strip()
     return f"{base_url}/search?keyword={brand_clean}"
 def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
-    """セカスト: 検索ページから商品URL+データを一括取得（requestsベース）"""
+    """セカスト: 検索ページから商品URL+データを一括取得（リトライ付き）"""
     global _secondstreet_cache
     _secondstreet_cache = {}
     urls = []
     page = 1
+    consecutive_errors = 0
     while page <= max_pages:
         url = f"{base_url}&page={page}" if page > 1 else base_url
         if progress_callback:
-            progress_callback(f"📄 ページ {page} の商品リストを取得中...")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
         try:
             html = None
             method = ""
@@ -1136,27 +1200,37 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
             # 4) requests Session（Cookie保持で403回避）
             if not html:
                 ss = _get_secondstreet_session()
-                res = ss.get(url, timeout=30)
-                if res.status_code == 200:
-                    html = res.text
-                    method = "requests"
-                else:
-                    if progress_callback:
-                        progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}")
-                    break
+                try:
+                    res = ss.get(url, timeout=30)
+                    if res.status_code == 200:
+                        html = res.text
+                        method = "requests"
+                    else:
+                        if progress_callback:
+                            progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}（リトライ）")
+                except Exception:
+                    pass
             if not html:
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    if progress_callback:
+                        progress_callback(f"⚠ 3回連続HTML取得失敗で中断 / {len(urls)}件取得済み")
+                    break
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: HTMLを取得できませんでした")
-                break
+                    progress_callback(f"⚠ ページ {page}: HTML取得失敗（{consecutive_errors}/3）リトライ中...")
+                page += 1
+                time.sleep(2)
+                continue
             if progress_callback and page == 1:
                 progress_callback(f"🔧 取得方式: {method}")
             soup = BeautifulSoup(html, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
+                # カードが0件は「データ終了」の可能性高い→即break
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: カード0件 / title='{title_text}' / HTML={len(html)}文字")
+                    progress_callback(f"⚠ ページ {page}: カード0件 / {len(urls)}件取得済み")
                 break
             new_count = 0
             for card in cards:
@@ -1216,12 +1290,19 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                 new_count += 1
             if new_count == 0:
                 break
+            consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
         except Exception as e:
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                if progress_callback:
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み: {type(e).__name__}")
+                break
             if progress_callback:
-                progress_callback(f"⚠ セカスト例外: {type(e).__name__}: {str(e)[:100]}")
-            break
+                progress_callback(f"⚠ ページ {page} 例外: {type(e).__name__}（{consecutive_errors}/3）リトライ中...")
+            page += 1
+            time.sleep(2)
     return urls
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
@@ -2202,15 +2283,15 @@ with st.sidebar:
         if len(selected_sites) == 1:
             selected_ec = selected_sites[0]
             if selected_ec == "コメ兵":
-                max_pages = st.slider("取得ページ数", 1, 100, 10, help="1ページ約50件")
+                max_pages = st.slider("取得ページ数", 1, 200, 10, help="1ページ約50件（200p=約10,000件）")
             elif selected_ec == "RAGTAG":
-                max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約100件")
+                max_pages = st.slider("取得ページ数", 1, 200, 5, help="1ページ約100件（200p=約20,000件）")
             elif selected_ec == "セカスト":
-                max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約60件")
+                max_pages = st.slider("取得ページ数", 1, 200, 5, help="1ページ約60件（200p=約12,000件）")
             else:
-                max_pages = st.slider("取得ページ数", 1, 100, 5, help="1ページ約90件")
+                max_pages = st.slider("取得ページ数", 1, 200, 5, help="1ページ約90件（200p=約18,000件）")
         else:
-            max_pages = st.slider("取得ページ数", 1, 100, 10, help="各サイトごとのページ数")
+            max_pages = st.slider("取得ページ数", 1, 200, 10, help="各サイトごとのページ数")
     st.divider()
     # ScraperAPI設定（セカスト用・Streamlit Cloud対応）
     # st.secrets に SCRAPER_API_KEY があれば自動で使う
