@@ -1201,11 +1201,16 @@ def _ss_extract_chrome_cookies():
         except Exception:
             pass
     return cookies
-def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, save_callback=None):
+def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, save_callback=None, existing_urls=None):
     """セカスト: 検索ページから商品URL+データを一括取得（リトライ付き・メモリ最適化）
-    save_callback: 10ページごとに呼ばれるコールバック(cache_dict) → 中間保存用"""
+    save_callback: 10ページごとに呼ばれるコールバック(cache_dict) → 中間保存用
+    existing_urls: 既存取得済みURL集合（再開時にスキップ用）"""
     global _secondstreet_cache
     _secondstreet_cache = {}
+    # 再開モード: 既存URLをキャッシュに入れて重複スキップ
+    if existing_urls:
+        for u in existing_urls:
+            _secondstreet_cache[u] = {"_skip": True}
     urls = []
     page = 1
     consecutive_errors = 0
@@ -1402,6 +1407,11 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                 new_count += 1
             if new_count == 0:
                 del soup, html, cards
+                if existing_urls:
+                    # 再開モード: 既存URLのページはスキップして続行
+                    page += 1
+                    time.sleep(random.uniform(0.3, 0.5))
+                    continue
                 break
             # メモリ解放（毎ページ）
             del soup, html, cards
@@ -1437,7 +1447,10 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
     return urls
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
-    return _secondstreet_cache.get(url)
+    data = _secondstreet_cache.get(url)
+    if data and "_skip" in data:
+        return None  # 再開モードで既存URLはスキップ
+    return data
 def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None, batch_size=200):
     """並列処理で商品詳細を取得（バッチ処理対応）"""
     results = []
@@ -2861,6 +2874,58 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         site_counts = df["サイト"].value_counts()
         site_summary = " / ".join([f"{EC_SITES[s]['icon']} {s}: {c}件" for s, c in site_counts.items() if s in EC_SITES])
         st.info(f"📊 サイト別内訳: {site_summary}")
+    # セカスト再スクレイピングボタン（不足分追加取得）
+    _has_ss = ("サイト" in df.columns and "セカスト" in df["サイト"].values) or (st.session_state.get("selected_ec") == "セカスト")
+    if _has_ss and st.session_state.brand_name:
+        if st.button("🔄 セカスト不足分を再スクレイピング", use_container_width=True, key="resume_ss_btn",
+                      help="取りこぼしたデータを追加取得します（既存データは保持）"):
+            _resume_brand = st.session_state.brand_name
+            # 既存セカストURLを取得
+            if "サイト" in df.columns:
+                _existing_ss_urls = set(df[df["サイト"] == "セカスト"]["URL"].dropna().tolist())
+            else:
+                _existing_ss_urls = set(df["URL"].dropna().tolist())
+            _resume_status = st.empty()
+            _resume_progress = st.progress(0)
+            _resume_status.text(f"🔄 セカスト再スクレイピング中...（既存{len(_existing_ss_urls)}件をスキップ）")
+            # サジェスト候補を使う
+            _ss_brands = [_resume_brand]
+            if (st.session_state.brand_suggest_results
+                    and st.session_state.brand_suggest_keyword.lower() in _resume_brand.lower()):
+                _ss_brands = [b["name"] for b in st.session_state.brand_suggest_results]
+            _new_results = []
+            for _bi, _bname in enumerate(_ss_brands):
+                _resume_status.text(f"🔄 [{_bi+1}/{len(_ss_brands)}] {_bname} を再スクレイピング中...")
+                _burl = secondstreet_build_url(_bname, "")
+                def _resume_save_cb(cache_dict):
+                    pass  # 中間保存は不要（マージ時に一括保存）
+                _purls = secondstreet_get_product_urls(
+                    _burl, 999,
+                    progress_callback=lambda msg, _s=_resume_status, _n=_bname: _s.text(f"🔄 {_n}: {msg}"),
+                    save_callback=_resume_save_cb,
+                    existing_urls=_existing_ss_urls,
+                )
+                if _purls:
+                    _brand_results = [secondstreet_get_product_detail(u) for u in _purls]
+                    _brand_results = [r for r in _brand_results if r]
+                    _new_results.extend(_brand_results)
+                _resume_progress.progress((_bi + 1) / len(_ss_brands))
+            if _new_results:
+                for r in _new_results:
+                    r.setdefault("サイト", "セカスト")
+                _new_df = pd.DataFrame(_new_results)
+                # 既存DFとマージ（URL重複除去）
+                _merged = pd.concat([df, _new_df], ignore_index=True)
+                _merged = _merged.drop_duplicates(subset=["URL"], keep="first")
+                _cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                _merged = _merged[[c for c in _cols if c in _merged.columns]]
+                st.session_state.results_df = _merged
+                _save_results_backup(_merged, _resume_brand)
+                _resume_status.text(f"✅ {len(_new_results)}件を追加取得（合計{len(_merged)}件）")
+                st.rerun()
+            else:
+                _resume_status.text("ℹ️ 新規データなし（全件取得済みの可能性）")
+                _resume_progress.progress(1.0)
     # メトリクス（2行x2列でスマホでも見やすく）
     mcol1, mcol2 = st.columns(2)
     with mcol1:
