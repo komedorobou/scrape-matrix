@@ -2890,8 +2890,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         st.divider()
         _ss_count = df[df["サイト"] == "セカスト"].shape[0] if "サイト" in df.columns else len(df)
         st.warning(f"⚠️ セカスト現在 **{_ss_count}件** — 不足がある場合は再取得してください")
-        if st.button("🔄 セカスト不足分を再スクレイピング", use_container_width=True, key="resume_ss_btn",
-                      type="primary", help="取りこぼしたデータを追加取得します（既存データは保持）"):
+        if st.button("🔄 セカスト不足分を再スクレイピング", use_container_width=True, key="resume_ss_btn"):
             _resume_brand = st.session_state.brand_name
             # 既存セカストURLを取得
             if "サイト" in df.columns:
