@@ -1212,7 +1212,14 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
         for u in existing_urls:
             _secondstreet_cache[u] = {"_skip": True}
     urls = []
-    page = 1
+    # 再開モード: 既存件数からスタートページを推定（1ページ≒60件）して高速スキップ
+    if existing_urls and len(existing_urls) > 60:
+        _start_page = max(1, (len(existing_urls) // 60) - 5)  # 5ページ手前から安全マージン
+        if progress_callback:
+            progress_callback(f"⏩ 既存{len(existing_urls)}件 → ページ{_start_page}から再開")
+    else:
+        _start_page = 1
+    page = _start_page
     consecutive_errors = 0
     # Chrome→Cookie抽出→requests切替でメモリ節約
     _chrome_cookies = {}
