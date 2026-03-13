@@ -11,6 +11,7 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import os as _os
+import gc as _gc
 import sys as _sys
 try:
     import cloudscraper
@@ -61,6 +62,16 @@ def _get_uc_driver():
         return _uc_driver
     except Exception:
         return None
+def _restart_uc_driver():
+    """Chromeドライバーを再起動（メモリリーク対策）"""
+    global _uc_driver
+    if _uc_driver is not None:
+        try:
+            _uc_driver.quit()
+        except Exception:
+            pass
+        _uc_driver = None
+        _gc.collect()
 def _fetch_with_chrome(url, timeout=30):
     """Chromeでページを取得。成功時はHTMLテキスト、失敗時はNone"""
     driver = _get_uc_driver()
@@ -1328,6 +1339,15 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                 new_count += 1
             if new_count == 0:
                 break
+            # メモリ解放（大量ページ対策）
+            del soup, html, cards
+            if page % 20 == 0:
+                _gc.collect()
+            # Chrome定期リスタート（メモリリーク対策）
+            if page % 50 == 0 and method == "Chrome":
+                _restart_uc_driver()
+                if progress_callback:
+                    progress_callback(f"🔄 Chrome再起動（メモリ解放）/ {len(urls)}件取得済み")
             consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
@@ -2535,6 +2555,9 @@ if scrape_button:
                     st.warning("⚠️ 商品詳細の取得に失敗しました")
         except Exception as e:
             st.error(f"⚠️ スクレイピング中にエラーが発生しました: {e}")
+            # セカストはキャッシュから部分データを救出
+            if not results and _secondstreet_cache:
+                results = list(_secondstreet_cache.values())
             # エラー発生時でも途中結果があれば保存
             if results:
                 st.warning(f"⚠️ エラー発生前に取得済みの {len(results)}件 を保存します")
@@ -2671,6 +2694,22 @@ if scrape_button:
                 site_progress.progress(1.0)
             except Exception as e:
                 st.error(f"⚠️ {site_name} のスクレイピング中にエラーが発生しました: {e}")
+                # セカストはキャッシュから部分データを救出
+                if site_name == "セカスト" and _secondstreet_cache:
+                    rescued = list(_secondstreet_cache.values())
+                    for r in rescued:
+                        r["サイト"] = site_name
+                    all_results.extend(rescued)
+                    st.warning(f"⚠️ {site_name}: エラー前に取得済みの {len(rescued)}件 を保存しました")
+                    # 中間保存
+                    if all_results:
+                        _interim_df = pd.DataFrame(all_results)
+                        _interim_cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                        _interim_df = _interim_df[[c for c in _interim_cols if c in _interim_df.columns]]
+                        st.session_state.results_df = _interim_df
+                        st.session_state.brand_name = brand_input
+                        st.session_state.scraping_done = True
+                        _save_results_backup(_interim_df, brand_input)
                 continue
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
