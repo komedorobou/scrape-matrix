@@ -1191,6 +1191,16 @@ def secondstreet_build_url(brand, category):
     base_url = EC_SITES["セカスト"]["base_url"]
     brand_clean = brand.strip()
     return f"{base_url}/search?keyword={brand_clean}"
+def _ss_extract_chrome_cookies():
+    """Chromeからクッキーを抽出して返す"""
+    cookies = {}
+    if _uc_driver is not None:
+        try:
+            for c in _uc_driver.get_cookies():
+                cookies[c['name']] = c['value']
+        except Exception:
+            pass
+    return cookies
 def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, save_callback=None):
     """セカスト: 検索ページから商品URL+データを一括取得（リトライ付き・メモリ最適化）
     save_callback: 10ページごとに呼ばれるコールバック(cache_dict) → 中間保存用"""
@@ -1202,6 +1212,8 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
     # Chrome→Cookie抽出→requests切替でメモリ節約
     _chrome_cookies = {}
     _preferred_method = None  # 1ページ目で成功した方式を記憶
+    _cookie_refresh_count = 0  # Cookie再取得の回数制限
+    _empty_page_count = 0  # カード0件の連続回数
     while page <= max_pages:
         url = f"{base_url}&page={page}" if page > 1 else base_url
         if progress_callback:
@@ -1252,21 +1264,21 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                             method = "requests+cookies"
                     except Exception:
                         pass
-            # 1) Chrome（1ページ目 or 軽量方式が全部失敗した時のみ）
-            if not html:
+            # 1) Chrome（1ページ目 or Cookie切れ時のリフレッシュ用、最大3回）
+            if not html and (page == 1 or _cookie_refresh_count < 3):
                 html = _fetch_with_chrome(url)
                 if html:
-                    method = "Chrome"
-                    # Chromeからクッキーを抽出して以降はrequestsで使う
-                    if _uc_driver is not None:
-                        try:
-                            for c in _uc_driver.get_cookies():
-                                _chrome_cookies[c['name']] = c['value']
-                        except Exception:
-                            pass
-                    # 1ページ目成功後、Chromeを即終了してメモリ解放
-                    if page == 1:
-                        _restart_uc_driver()
+                    method = "Chrome" if page == 1 else "Chrome(refresh)"
+                    # Cookieを抽出
+                    _chrome_cookies = _ss_extract_chrome_cookies()
+                    if page > 1:
+                        _cookie_refresh_count += 1
+                        if progress_callback:
+                            progress_callback(f"🔄 Cookie再取得（{_cookie_refresh_count}/3）/ {len(urls)}件取得済み")
+                    # Cookie取得後すぐChrome解放
+                    _restart_uc_driver()
+                    if _chrome_cookies:
+                        _preferred_method = "requests+cookies"
             # 2) curl_cffi（TLS指紋偽装）
             if not html:
                 html = _fetch_with_curl(url)
@@ -1298,32 +1310,40 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                     pass
             if not html:
                 consecutive_errors += 1
-                if consecutive_errors >= 3:
+                if consecutive_errors >= 5:
                     if progress_callback:
-                        progress_callback(f"⚠ 3回連続HTML取得失敗で中断 / {len(urls)}件取得済み")
+                        progress_callback(f"⚠ 5回連続HTML取得失敗で中断 / {len(urls)}件取得済み")
                     break
                 if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: HTML取得失敗（{consecutive_errors}/3）リトライ中...")
-                page += 1
-                time.sleep(2)
+                    progress_callback(f"⚠ ページ {page}: HTML取得失敗（{consecutive_errors}/5）リトライ中...")
+                # 段階的バックオフ（ページは進めずリトライ）
+                time.sleep(min(2 * consecutive_errors, 10))
                 continue
             # 1ページ目で成功した方式を記憶（Chrome以外）
             if page == 1:
                 if method in ("curl_cffi", "cloudscraper", "ScraperAPI", "ScraperAPI(render)"):
                     _preferred_method = method
-                elif method == "Chrome" and _chrome_cookies:
+                elif method in ("Chrome", "Chrome(refresh)") and _chrome_cookies:
                     _preferred_method = "requests+cookies"
                 if progress_callback:
                     progress_callback(f"🔧 取得方式: {method}" + (f" → 2p以降: {_preferred_method}" if _preferred_method else ""))
             soup = BeautifulSoup(html, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
-                title = soup.select_one('title')
-                title_text = title.get_text(strip=True) if title else "(no title)"
-                if progress_callback:
-                    progress_callback(f"⚠ ページ {page}: カード0件 / {len(urls)}件取得済み")
+                _empty_page_count += 1
                 del soup, html
-                break
+                if _empty_page_count >= 3:
+                    # 3回連続カード0件で本当にデータ終了
+                    if progress_callback:
+                        progress_callback(f"⚠ 3回連続カード0件でデータ終了 / {len(urls)}件取得済み")
+                    break
+                # 1-2回目はスキップして次ページへ（一時的なブロックの可能性）
+                if progress_callback:
+                    progress_callback(f"⚠ ページ {page}: カード0件（{_empty_page_count}/3）スキップ...")
+                page += 1
+                time.sleep(2)
+                continue
+            _empty_page_count = 0  # カード取得成功でリセット
             new_count = 0
             for card in cards:
                 link = card.select_one('a.itemCard_inner')
@@ -1404,14 +1424,14 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
             break
         except Exception as e:
             consecutive_errors += 1
-            if consecutive_errors >= 3:
+            if consecutive_errors >= 5:
                 if progress_callback:
-                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み: {type(e).__name__}")
+                    progress_callback(f"⚠ 5回連続例外で中断 / {len(urls)}件取得済み: {type(e).__name__}")
                 break
             if progress_callback:
-                progress_callback(f"⚠ ページ {page} 例外: {type(e).__name__}（{consecutive_errors}/3）リトライ中...")
-            page += 1
-            time.sleep(2)
+                progress_callback(f"⚠ ページ {page} 例外: {type(e).__name__}（{consecutive_errors}/5）リトライ中...")
+            # 段階的バックオフ
+            time.sleep(min(2 * consecutive_errors, 10))
     # 終了時にChrome確実に解放
     _restart_uc_driver()
     return urls
