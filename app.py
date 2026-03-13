@@ -988,10 +988,10 @@ def _get_trefac_session():
     return _trefac_session
 
 def trefac_get_product_detail(url):
-    """トレファク: 商品詳細を取得"""
+    """トレファク: 商品詳細を取得（並列呼び出し対応）"""
     try:
-        ss = _get_trefac_session()
-        res = ss.get(url, timeout=30)
+        # 並列処理でShared Sessionはスレッドセーフではないため、直接requests.getを使用
+        res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
         data = {"URL": url}
         # 価格
@@ -1226,23 +1226,26 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
     return _secondstreet_cache.get(url)
-def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None):
-    """並列処理で商品詳細を取得"""
+def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None, batch_size=200):
+    """並列処理で商品詳細を取得（バッチ処理対応）"""
     results = []
     total = len(urls)
     completed = 0
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(get_detail_func, url): url for url in urls}
-        for future in as_completed(futures):
-            try:
-                data = future.result()
-            except Exception:
-                data = None
-            if data:
-                results.append(data)
-            completed += 1
-            if progress_callback:
-                progress_callback(completed, total)
+    # バッチに分割して処理（メモリ節約＋安定性向上）
+    for batch_start in range(0, total, batch_size):
+        batch_urls = urls[batch_start:batch_start + batch_size]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(get_detail_func, url): url for url in batch_urls}
+            for future in as_completed(futures):
+                try:
+                    data = future.result(timeout=60)
+                except Exception:
+                    data = None
+                if data:
+                    results.append(data)
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total)
     return results
 # ===== 件数チェック（1ページ目だけ取得して概算） =====
 def _check_count_komehyo(brand, category):
@@ -2377,6 +2380,7 @@ if scrape_button:
         def update_status(msg):
             status_text.text(msg)
         _need_rerun = False
+        results = []
         try:
             product_urls = get_urls_func(base_url, max_pages, update_status)
             if not product_urls:
@@ -2388,22 +2392,13 @@ if scrape_button:
                     status_text.text("📦 データを整理中...")
                     results = [get_detail_func(url) for url in product_urls]
                     results = [r for r in results if r]
-                elif selected_ec in ["RAGTAG", "トレファク"]:
+                else:
+                    # コメ兵・RAGTAG・トレファク全て並列処理
                     status_text.text("🚀 並列処理で詳細取得中...")
                     def update_progress(completed, total):
                         progress_bar.progress(completed / total)
                         status_text.text(f"🚀 [{completed}/{total}] 並列取得中...")
                     results = get_products_parallel(product_urls, get_detail_func, max_workers=10, progress_callback=update_progress)
-                else:
-                    results = []
-                    total = len(product_urls)
-                    for i, url in enumerate(product_urls):
-                        status_text.text(f"🔄 [{i+1}/{total}] 商品詳細を取得中...")
-                        progress_bar.progress((i + 1) / total)
-                        data = get_detail_func(url)
-                        if data:
-                            results.append(data)
-                        time.sleep(random.uniform(0.3, 0.7))
                 status_text.text("✅ 完了！")
                 progress_bar.progress(1.0)
                 if results:
@@ -2418,6 +2413,16 @@ if scrape_button:
                     st.warning("⚠️ 商品詳細の取得に失敗しました")
         except Exception as e:
             st.error(f"⚠️ スクレイピング中にエラーが発生しました: {e}")
+            # エラー発生時でも途中結果があれば保存
+            if results:
+                st.warning(f"⚠️ エラー発生前に取得済みの {len(results)}件 を保存します")
+                df = pd.DataFrame(results)
+                columns = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                df = df[[c for c in columns if c in df.columns]]
+                st.session_state.results_df = df
+                st.session_state.brand_name = brand_input
+                st.session_state.scraping_done = True
+                _need_rerun = True
         if _need_rerun:
             st.rerun()
     else:
@@ -2429,7 +2434,7 @@ if scrape_button:
                 "build_url": lambda b, c=_cat: komehyo_build_url(b, c),
                 "get_urls": komehyo_get_product_urls,
                 "get_detail": komehyo_get_product_detail,
-                "parallel": False,
+                "parallel": True,
             },
             "RAGTAG": {
                 "icon": "👔",
@@ -2528,6 +2533,7 @@ if scrape_button:
                 continue
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
+        _need_rerun = False
         if all_results:
             df = pd.DataFrame(all_results)
             columns = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
@@ -2535,9 +2541,11 @@ if scrape_button:
             st.session_state.results_df = df
             st.session_state.brand_name = brand_input
             st.session_state.scraping_done = True
-            st.rerun()
+            _need_rerun = True
         else:
             st.warning("⚠️ どのサイトからも商品を取得できませんでした")
+        if _need_rerun:
+            st.rerun()
 # 結果表示（session_stateから）
 if st.session_state.scraping_done and st.session_state.results_df is not None:
     df = st.session_state.results_df
