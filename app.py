@@ -1191,13 +1191,17 @@ def secondstreet_build_url(brand, category):
     base_url = EC_SITES["セカスト"]["base_url"]
     brand_clean = brand.strip()
     return f"{base_url}/search?keyword={brand_clean}"
-def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
-    """セカスト: 検索ページから商品URL+データを一括取得（リトライ付き）"""
+def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, save_callback=None):
+    """セカスト: 検索ページから商品URL+データを一括取得（リトライ付き・メモリ最適化）
+    save_callback: 10ページごとに呼ばれるコールバック(cache_dict) → 中間保存用"""
     global _secondstreet_cache
     _secondstreet_cache = {}
     urls = []
     page = 1
     consecutive_errors = 0
+    # Chrome→Cookie抽出→requests切替でメモリ節約
+    _chrome_cookies = {}
+    _preferred_method = None  # 1ページ目で成功した方式を記憶
     while page <= max_pages:
         url = f"{base_url}&page={page}" if page > 1 else base_url
         if progress_callback:
@@ -1208,17 +1212,14 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
             # 0) ScraperAPI（APIキーがあれば最優先・確実）
             scraper_api_key = st.session_state.get("scraper_api_key", "")
             if not html and scraper_api_key:
-                # まずrender=falseで試す（高速・API消費少ない）
                 try:
                     api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
                     res = requests.get(api_url, timeout=60)
                     if res.status_code == 200:
-                        # カードがあるか簡易チェック
                         if '.itemCard' in res.text or 'itemCard' in res.text:
                             html = res.text
                             method = "ScraperAPI"
                         else:
-                            # render=falseでカードなし→render=true+waitで再試行
                             api_url2 = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
                                         f"&url={url}&render=true&wait=5000")
                             res2 = requests.get(api_url2, timeout=90)
@@ -1227,11 +1228,45 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                                 method = "ScraperAPI(render)"
                 except Exception:
                     pass
-            # 1) Chrome（undetected-chromedriver）- ローカル最強
+            # 2ページ目以降: 前回成功した軽量方式を優先（Chrome回避）
+            if not html and _preferred_method and page > 1:
+                if _preferred_method == "curl_cffi":
+                    html = _fetch_with_curl(url)
+                    if html:
+                        method = "curl_cffi"
+                elif _preferred_method == "cloudscraper" and _scraper:
+                    try:
+                        res = _scraper.get(url, headers=HEADERS, timeout=30)
+                        if res.status_code == 200:
+                            html = res.text
+                            method = "cloudscraper"
+                    except Exception:
+                        pass
+                elif _preferred_method == "requests+cookies" and _chrome_cookies:
+                    ss = _get_secondstreet_session()
+                    try:
+                        ss.cookies.update(_chrome_cookies)
+                        res = ss.get(url, timeout=30)
+                        if res.status_code == 200 and ('itemCard' in res.text):
+                            html = res.text
+                            method = "requests+cookies"
+                    except Exception:
+                        pass
+            # 1) Chrome（1ページ目 or 軽量方式が全部失敗した時のみ）
             if not html:
                 html = _fetch_with_chrome(url)
                 if html:
                     method = "Chrome"
+                    # Chromeからクッキーを抽出して以降はrequestsで使う
+                    if _uc_driver is not None:
+                        try:
+                            for c in _uc_driver.get_cookies():
+                                _chrome_cookies[c['name']] = c['value']
+                        except Exception:
+                            pass
+                    # 1ページ目成功後、Chromeを即終了してメモリ解放
+                    if page == 1:
+                        _restart_uc_driver()
             # 2) curl_cffi（TLS指紋偽装）
             if not html:
                 html = _fetch_with_curl(url)
@@ -1250,6 +1285,8 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
             if not html:
                 ss = _get_secondstreet_session()
                 try:
+                    if _chrome_cookies:
+                        ss.cookies.update(_chrome_cookies)
                     res = ss.get(url, timeout=30)
                     if res.status_code == 200:
                         html = res.text
@@ -1270,16 +1307,22 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                 page += 1
                 time.sleep(2)
                 continue
-            if progress_callback and page == 1:
-                progress_callback(f"🔧 取得方式: {method}")
+            # 1ページ目で成功した方式を記憶（Chrome以外）
+            if page == 1:
+                if method in ("curl_cffi", "cloudscraper", "ScraperAPI", "ScraperAPI(render)"):
+                    _preferred_method = method
+                elif method == "Chrome" and _chrome_cookies:
+                    _preferred_method = "requests+cookies"
+                if progress_callback:
+                    progress_callback(f"🔧 取得方式: {method}" + (f" → 2p以降: {_preferred_method}" if _preferred_method else ""))
             soup = BeautifulSoup(html, 'html.parser')
             cards = soup.select('.itemCard')
             if not cards:
-                # カードが0件は「データ終了」の可能性高い→即break
                 title = soup.select_one('title')
                 title_text = title.get_text(strip=True) if title else "(no title)"
                 if progress_callback:
                     progress_callback(f"⚠ ページ {page}: カード0件 / {len(urls)}件取得済み")
+                del soup, html
                 break
             new_count = 0
             for card in cards:
@@ -1338,19 +1381,27 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                 urls.append(product_url)
                 new_count += 1
             if new_count == 0:
+                del soup, html, cards
                 break
-            # メモリ解放（大量ページ対策）
+            # メモリ解放（毎ページ）
             del soup, html, cards
-            if page % 20 == 0:
+            if page % 10 == 0:
                 _gc.collect()
-            # Chrome定期リスタート（メモリリーク対策）
-            if page % 50 == 0 and method == "Chrome":
-                _restart_uc_driver()
+                # 10ページごとに中間保存（OOM kill対策）
+                if save_callback and _secondstreet_cache:
+                    save_callback(_secondstreet_cache)
                 if progress_callback:
-                    progress_callback(f"🔄 Chrome再起動（メモリ解放）/ {len(urls)}件取得済み")
+                    progress_callback(f"📄 {len(urls)}件取得済み（保存+メモリ解放済み）")
             consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
+        except MemoryError:
+            # メモリ不足は即座にブレイク（持ってるデータを救う）
+            _gc.collect()
+            _restart_uc_driver()
+            if progress_callback:
+                progress_callback(f"⚠ メモリ不足で中断 / {len(urls)}件取得済み")
+            break
         except Exception as e:
             consecutive_errors += 1
             if consecutive_errors >= 3:
@@ -1361,6 +1412,8 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None):
                 progress_callback(f"⚠ ページ {page} 例外: {type(e).__name__}（{consecutive_errors}/3）リトライ中...")
             page += 1
             time.sleep(2)
+    # 終了時にChrome確実に解放
+    _restart_uc_driver()
     return urls
 def secondstreet_get_product_detail(url):
     """セカスト: キャッシュから商品データを返す（検索ページで取得済み）"""
@@ -2485,11 +2538,22 @@ if scrape_button:
                 all_results = []
                 total_brands = len(_ss_brands)
                 overall_progress = st.progress(0)
+                def _ss_brand_save_cb(cache_dict, _bi=brand_input):
+                    _rescued = list(cache_dict.values())
+                    _interim = all_results + _rescued
+                    if _interim:
+                        _df = pd.DataFrame(_interim)
+                        _cols = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                        _df = _df[[c for c in _cols if c in _df.columns]]
+                        st.session_state.results_df = _df
+                        st.session_state.brand_name = _bi
+                        st.session_state.scraping_done = True
+                        _save_results_backup(_df, _bi)
                 for bi, bname in enumerate(_ss_brands):
                     status_text.text(f"🔴 [{bi+1}/{total_brands}] ブランド「{bname}」を検索中...")
                     overall_progress.progress(bi / total_brands)
                     burl = secondstreet_build_url(bname, category)
-                    purls = secondstreet_get_product_urls(burl, max_pages, lambda msg: status_text.text(f"🔴 {bname}: {msg}"))
+                    purls = secondstreet_get_product_urls(burl, max_pages, lambda msg: status_text.text(f"🔴 {bname}: {msg}"), save_callback=_ss_brand_save_cb)
                     if purls:
                         st.info(f"🔴 **{bname}**: {len(purls)}件発見")
                         brand_results = [secondstreet_get_product_detail(u) for u in purls]
@@ -2522,8 +2586,20 @@ if scrape_button:
             status_text.text(msg)
         _need_rerun = False
         results = []
+        # セカスト: 10ページごとに中間保存するコールバック
+        _single_save_cb = None
+        if selected_ec == "セカスト":
+            def _single_save_cb(cache_dict, _bi=brand_input):
+                _rescued = list(cache_dict.values())
+                _df = pd.DataFrame(_rescued)
+                _cols = ["ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                _df = _df[[c for c in _cols if c in _df.columns]]
+                st.session_state.results_df = _df
+                st.session_state.brand_name = _bi
+                st.session_state.scraping_done = True
+                _save_results_backup(_df, _bi)
         try:
-            product_urls = get_urls_func(base_url, max_pages, update_status)
+            product_urls = get_urls_func(base_url, max_pages, update_status, **({'save_callback': _single_save_cb} if _single_save_cb else {}))
             if not product_urls:
                 st.error("❌ 商品が見つかりませんでした。ブランド名を確認してください。")
                 st.info(f"試したURL: {base_url}")
@@ -2624,12 +2700,25 @@ if scrape_button:
                 site_status = st.empty()
                 # セカスト＋サジェスト候補がある場合は全候補を検索
                 if site_name == "セカスト" and len(_ss_suggest_brands) > 1:
+                    def _ms_ss_save_cb(cache_dict, _site=site_name, _bi=brand_input):
+                        _rescued = list(cache_dict.values())
+                        for _r in _rescued:
+                            _r.setdefault("サイト", _site)
+                        _all = all_results + _rescued
+                        if _all:
+                            _df = pd.DataFrame(_all)
+                            _cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                            _df = _df[[c for c in _cols if c in _df.columns]]
+                            st.session_state.results_df = _df
+                            st.session_state.brand_name = _bi
+                            st.session_state.scraping_done = True
+                            _save_results_backup(_df, _bi)
                     results = []
                     for bi, bname in enumerate(_ss_suggest_brands):
                         site_status.text(f"🔴 [{bi+1}/{len(_ss_suggest_brands)}] ブランド「{bname}」を検索中...")
                         site_progress.progress(bi / len(_ss_suggest_brands))
                         burl = config["build_url"](bname)
-                        purls = config["get_urls"](burl, max_pages, lambda msg, _s=site_status, _n=bname: _s.text(f"🔴 {_n}: {msg}"))
+                        purls = config["get_urls"](burl, max_pages, lambda msg, _s=site_status, _n=bname: _s.text(f"🔴 {_n}: {msg}"), save_callback=_ms_ss_save_cb)
                         if purls:
                             brand_results = [config["get_detail"](u) for u in purls]
                             brand_results = [r for r in brand_results if r]
@@ -2653,7 +2742,24 @@ if scrape_button:
                 site_status.text(f"🔗 {site_name}: {base_url}")
                 def update_site_status(msg, _status=site_status, _icon=site_icon, _name=site_name):
                     _status.text(f"{_icon} {_name}: {msg}")
-                product_urls = config["get_urls"](base_url, max_pages, update_site_status)
+                # セカスト: 10ページごとに中間保存するコールバック
+                _ss_save_cb = None
+                if site_name == "セカスト":
+                    def _ss_save_cb(cache_dict, _site=site_name, _bi=brand_input):
+                        _rescued = list(cache_dict.values())
+                        for _r in _rescued:
+                            _r.setdefault("サイト", _site)
+                        _all = all_results + _rescued
+                        _df = pd.DataFrame(_all)
+                        _cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                        _df = _df[[c for c in _cols if c in _df.columns]]
+                        st.session_state.results_df = _df
+                        st.session_state.brand_name = _bi
+                        st.session_state.scraping_done = True
+                        _save_results_backup(_df, _bi)
+                    product_urls = config["get_urls"](base_url, max_pages, update_site_status, save_callback=_ss_save_cb)
+                else:
+                    product_urls = config["get_urls"](base_url, max_pages, update_site_status)
                 if not product_urls:
                     site_status.text(f"⚠️ {site_name}: 商品が見つかりませんでした")
                     site_progress.progress(1.0)
