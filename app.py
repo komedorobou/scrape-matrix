@@ -10,6 +10,7 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import os as _os
 import sys as _sys
 try:
     import cloudscraper
@@ -717,6 +718,35 @@ SECONDSTREET_CATEGORIES = {
     "メンズ": "men",
     "レディース": "women",
 }
+# ===== バックアップ（セッション消失対策） =====
+_BACKUP_PATH = _os.path.join("/tmp", "scrape_backup.pkl")
+
+def _save_results_backup(df, brand_name):
+    """スクレイピング結果をファイルにバックアップ（セッション消失対策）"""
+    try:
+        pd.to_pickle({"df": df, "brand": brand_name, "ts": datetime.now()}, _BACKUP_PATH)
+    except Exception:
+        pass
+
+def _load_results_backup():
+    """バックアップから結果を復元（1時間以内のもののみ）"""
+    try:
+        if _os.path.exists(_BACKUP_PATH):
+            data = pd.read_pickle(_BACKUP_PATH)
+            if (datetime.now() - data["ts"]).total_seconds() < 3600:
+                return data["df"], data["brand"]
+    except Exception:
+        pass
+    return None, None
+
+def _clear_results_backup():
+    """バックアップファイルを削除"""
+    try:
+        if _os.path.exists(_BACKUP_PATH):
+            _os.remove(_BACKUP_PATH)
+    except Exception:
+        pass
+
 # session_stateの初期化
 if 'results_df' not in st.session_state:
     st.session_state.results_df = None
@@ -738,6 +768,14 @@ if 'brand_suggest_results' not in st.session_state:
     st.session_state.brand_suggest_results = []  # [{name, id, count}, ...]
 if 'brand_suggest_keyword' not in st.session_state:
     st.session_state.brand_suggest_keyword = ""
+# バックアップからの自動復元（セッション消失時）
+if not st.session_state.scraping_done and st.session_state.results_df is None:
+    _backup_df, _backup_brand = _load_results_backup()
+    if _backup_df is not None:
+        st.session_state.results_df = _backup_df
+        st.session_state.brand_name = _backup_brand
+        st.session_state.scraping_done = True
+        st.toast("📂 前回のスクレイピング結果を自動復元しました")
 # ===== コメ兵用関数 =====
 def komehyo_build_url(brand, category):
     """コメ兵: 検索URLを構築"""
@@ -2343,6 +2381,7 @@ with st.sidebar:
             st.session_state.hinban_lookup_done = False
             st.session_state.hinban_merged_df = None
             st.session_state.wear_catalog_cache = {}
+            _clear_results_backup()
             st.rerun()
 # 件数チェック処理
 if count_button:
@@ -2446,6 +2485,7 @@ if scrape_button:
                     st.session_state.results_df = df
                     st.session_state.brand_name = brand_input
                     st.session_state.scraping_done = True
+                    _save_results_backup(df, brand_input)
                     st.rerun()
                 else:
                     st.warning("⚠️ どのブランドからも商品を取得できませんでした")
@@ -2489,6 +2529,7 @@ if scrape_button:
                     st.session_state.results_df = df
                     st.session_state.brand_name = brand_input
                     st.session_state.scraping_done = True
+                    _save_results_backup(df, brand_input)
                     _need_rerun = True
                 else:
                     st.warning("⚠️ 商品詳細の取得に失敗しました")
@@ -2503,6 +2544,7 @@ if scrape_button:
                 st.session_state.results_df = df
                 st.session_state.brand_name = brand_input
                 st.session_state.scraping_done = True
+                _save_results_backup(df, brand_input)
                 _need_rerun = True
         if _need_rerun:
             st.rerun()
@@ -2573,6 +2615,15 @@ if scrape_button:
                     for r in results:
                         r["サイト"] = site_name
                     all_results.extend(results)
+                    # 中間保存（クラッシュ対策: 各サイト完了時にバックアップ）
+                    if all_results:
+                        _interim_df = pd.DataFrame(all_results)
+                        _interim_cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                        _interim_df = _interim_df[[c for c in _interim_cols if c in _interim_df.columns]]
+                        st.session_state.results_df = _interim_df
+                        st.session_state.brand_name = brand_input
+                        st.session_state.scraping_done = True
+                        _save_results_backup(_interim_df, brand_input)
                     site_status.text(f"✅ {site_name}: {len(results)}件取得完了（{len(_ss_suggest_brands)}ブランド）")
                     continue
                 base_url = config["build_url"](brand_input)
@@ -2607,6 +2658,15 @@ if scrape_button:
                 for r in results:
                     r["サイト"] = site_name
                 all_results.extend(results)
+                # 中間保存（クラッシュ対策: 各サイト完了時にバックアップ）
+                if all_results:
+                    _interim_df = pd.DataFrame(all_results)
+                    _interim_cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                    _interim_df = _interim_df[[c for c in _interim_cols if c in _interim_df.columns]]
+                    st.session_state.results_df = _interim_df
+                    st.session_state.brand_name = brand_input
+                    st.session_state.scraping_done = True
+                    _save_results_backup(_interim_df, brand_input)
                 site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
                 site_progress.progress(1.0)
             except Exception as e:
@@ -2622,6 +2682,7 @@ if scrape_button:
             st.session_state.results_df = df
             st.session_state.brand_name = brand_input
             st.session_state.scraping_done = True
+            _save_results_backup(df, brand_input)
             _need_rerun = True
         else:
             st.warning("⚠️ どのサイトからも商品を取得できませんでした")
