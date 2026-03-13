@@ -534,9 +534,10 @@ st.markdown("""
         div[data-baseweb="tag"] {
             font-size: 0.85rem !important;
             padding: 4px 8px !important;
-            background-color: #E8EAF0 !important;
+            background-color: #FFFFFF !important;
             color: #31333F !important;
             border-radius: 6px !important;
+            border: 1px solid #D0D0D0 !important;
         }
         .stMultiSelect [data-baseweb="tag"] span,
         div[data-baseweb="tag"] span {
@@ -549,7 +550,7 @@ st.markdown("""
         }
         /* BaseWebインラインスタイル上書き */
         span[data-baseweb="tag"] {
-            background-color: #E8EAF0 !important;
+            background-color: #FFFFFF !important;
             color: #31333F !important;
         }
         span[data-baseweb="tag"] > span:first-child {
