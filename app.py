@@ -2321,6 +2321,7 @@ if scrape_button:
         status_text.text(f"🔗 URL: {base_url}")
         def update_status(msg):
             status_text.text(msg)
+        _need_rerun = False
         try:
             product_urls = get_urls_func(base_url, max_pages, update_status)
             if not product_urls:
@@ -2357,11 +2358,13 @@ if scrape_button:
                     st.session_state.results_df = df
                     st.session_state.brand_name = brand_input
                     st.session_state.scraping_done = True
-                    st.rerun()
+                    _need_rerun = True
                 else:
                     st.warning("⚠️ 商品詳細の取得に失敗しました")
         except Exception as e:
             st.error(f"⚠️ スクレイピング中にエラーが発生しました: {e}")
+        if _need_rerun:
+            st.rerun()
     else:
         # ===== 複数サイト =====
         _cat = category
