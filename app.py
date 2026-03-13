@@ -1219,6 +1219,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
     _preferred_method = None  # 1ページ目で成功した方式を記憶
     _cookie_refresh_count = 0  # Cookie再取得の回数制限
     _empty_page_count = 0  # カード0件の連続回数
+    _consecutive_skip_pages = 0  # 再開モード: 連続全スキップページ数
     while page <= max_pages:
         url = f"{base_url}&page={page}" if page > 1 else base_url
         if progress_callback:
@@ -1409,10 +1410,19 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                 del soup, html, cards
                 if existing_urls:
                     # 再開モード: 既存URLのページはスキップして続行
+                    _consecutive_skip_pages += 1
+                    if _consecutive_skip_pages >= 20:
+                        # 20ページ連続で全部既存→もう新規はないと判断
+                        if progress_callback:
+                            progress_callback(f"ℹ️ 20ページ連続スキップ → 新規データなしで終了 / {len(urls)}件追加取得済み")
+                        break
                     page += 1
                     time.sleep(random.uniform(0.3, 0.5))
                     continue
                 break
+            # 新規データあり→連続スキップカウンタリセット
+            if existing_urls:
+                _consecutive_skip_pages = 0
             # メモリ解放（毎ページ）
             del soup, html, cards
             if page % 10 == 0:
