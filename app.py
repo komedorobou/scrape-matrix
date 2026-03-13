@@ -528,7 +528,7 @@ st.markdown("""
             min-height: 44px !important;
             font-size: 16px !important;
         }
-        /* multiselect のタグを白背景に */
+        /* multiselect のタグを白背景に（primaryColor CSS変数を上書き） */
         .stMultiSelect [data-baseweb="tag"],
         .stMultiSelect [data-baseweb="tag"][class*="st-"],
         div[data-baseweb="tag"],
@@ -537,6 +537,7 @@ st.markdown("""
         .stMultiSelect span[data-baseweb="tag"],
         section[data-testid="stSidebar"] [data-baseweb="tag"],
         section[data-testid="stSidebar"] span[data-baseweb="tag"] {
+            --primary-color: #FFFFFF;
             font-size: 0.85rem !important;
             padding: 4px 8px !important;
             background: #FFFFFF !important;
@@ -544,6 +545,13 @@ st.markdown("""
             color: #31333F !important;
             border-radius: 6px !important;
             border: 1px solid #D0D0D0 !important;
+        }
+        /* BaseWeb Tagのinline style上書き（詳細度最大化） */
+        .stApp .stMultiSelect [data-baseweb="tag"],
+        .stApp section[data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"],
+        .stApp [data-baseweb="tag"] {
+            background: #FFFFFF !important;
+            background-color: #FFFFFF !important;
         }
         .stMultiSelect [data-baseweb="tag"] span,
         div[data-baseweb="tag"] span,
