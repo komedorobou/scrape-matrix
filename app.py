@@ -2225,6 +2225,29 @@ with st.sidebar:
         else:
             st.session_state["scraper_api_key"] = ""
     st.divider()
+    # multiselectタグの白背景をJS MutationObserverで強制適用
+    # （Styletronが後からprimaryColorを注入するためCSSだけでは上書き不可）
+    import streamlit.components.v1 as _components
+    _components.html("""
+    <script>
+    (function() {
+        var doc = window.parent.document;
+        function fixTags() {
+            doc.querySelectorAll('[data-baseweb="tag"]').forEach(function(tag) {
+                tag.style.setProperty('background-color', '#FFFFFF', 'important');
+                tag.style.setProperty('background', '#FFFFFF', 'important');
+                tag.style.setProperty('color', '#31333F', 'important');
+                tag.style.setProperty('border', '1px solid #D0D0D0', 'important');
+                tag.style.setProperty('border-radius', '6px', 'important');
+            });
+        }
+        fixTags();
+        new MutationObserver(fixTags).observe(doc.body, {
+            childList: true, subtree: true, attributes: true
+        });
+    })();
+    </script>
+    """, height=0)
     count_button = st.button("📊 件数チェック", use_container_width=True, key="count_check_btn")
     scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
     if st.session_state.scraping_done:
