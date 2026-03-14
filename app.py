@@ -1503,9 +1503,10 @@ def secondstreet_get_product_detail(url):
     if data and "_skip" in data:
         return None  # 再開モードで既存URLはスキップ
     return data
-def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None, batch_size=200):
-    """並列処理で商品詳細を取得（バッチ処理対応・エグゼキュータ再利用）"""
+def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None, batch_size=200, max_retries=3):
+    """並列処理で商品詳細を取得（バッチ処理対応・失敗URL自動リトライ付き）"""
     results = []
+    failed_urls = []
     total = len(urls)
     completed = 0
     # 単一エグゼキュータを再利用（10万件でもスレッド生成は1回だけ）
@@ -1514,18 +1515,43 @@ def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callba
             batch_urls = urls[batch_start:batch_start + batch_size]
             futures = {executor.submit(get_detail_func, url): url for url in batch_urls}
             for future in as_completed(futures):
+                url = futures[future]
                 try:
                     data = future.result(timeout=60)
                 except Exception:
                     data = None
                 if data:
                     results.append(data)
+                else:
+                    failed_urls.append(url)
                 completed += 1
                 if progress_callback:
                     progress_callback(completed, total)
             # バッチ間でGC実行（メモリ断片化防止）
             if batch_start > 0 and batch_start % (batch_size * 10) == 0:
                 _gc.collect()
+        # 失敗URLを最大max_retries回リトライ（全サイト完走保証）
+        for retry_round in range(1, max_retries + 1):
+            if not failed_urls:
+                break
+            retry_targets = failed_urls
+            failed_urls = []
+            if progress_callback:
+                progress_callback(completed, total)  # リトライ前に進捗更新
+            time.sleep(2 * retry_round)  # リトライ前に少し待つ
+            for rb_start in range(0, len(retry_targets), batch_size):
+                rb_urls = retry_targets[rb_start:rb_start + batch_size]
+                futures = {executor.submit(get_detail_func, url): url for url in rb_urls}
+                for future in as_completed(futures):
+                    url = futures[future]
+                    try:
+                        data = future.result(timeout=90)  # リトライ時はタイムアウト延長
+                    except Exception:
+                        data = None
+                    if data:
+                        results.append(data)
+                    else:
+                        failed_urls.append(url)
     return results
 # ===== 件数チェック（1ページ目だけ取得して概算） =====
 def _check_count_komehyo(brand, category):
@@ -2866,6 +2892,7 @@ if scrape_button:
                     results = get_products_parallel(product_urls, config["get_detail"], max_workers=10, progress_callback=update_site_progress)
                 else:
                     results = []
+                    _failed = []
                     total = len(product_urls)
                     for i, url in enumerate(product_urls):
                         site_status.text(f"{site_icon} {site_name}: [{i+1}/{total}] 取得中...")
@@ -2873,7 +2900,24 @@ if scrape_button:
                         data = config["get_detail"](url)
                         if data:
                             results.append(data)
+                        else:
+                            _failed.append(url)
                         time.sleep(random.uniform(0.3, 0.7))
+                    # 失敗分を最大3回リトライ
+                    for _retry in range(1, 4):
+                        if not _failed:
+                            break
+                        site_status.text(f"{site_icon} {site_name}: リトライ{_retry}/3（{len(_failed)}件）...")
+                        time.sleep(2 * _retry)
+                        _retry_targets = _failed
+                        _failed = []
+                        for url in _retry_targets:
+                            data = config["get_detail"](url)
+                            if data:
+                                results.append(data)
+                            else:
+                                _failed.append(url)
+                            time.sleep(random.uniform(0.5, 1.0))
                 for r in results:
                     r["サイト"] = site_name
                 all_results.extend(results)
