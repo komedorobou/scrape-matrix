@@ -1,4 +1,5 @@
 import streamlit as st
+_APP_VERSION = "v48"
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -2439,7 +2440,7 @@ def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
     return enriched, filtered
 # タイトル
 st.title("👜 ブランドECスクレイパー")
-st.caption("ECサイトとブランドを選んで商品データを取得")
+st.caption(f"ECサイトとブランドを選んで商品データを取得　|　{_APP_VERSION}")
 # サイドバー
 with st.sidebar:
     st.markdown("### 🏬 ECサイト選択")
