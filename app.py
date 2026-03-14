@@ -1,4 +1,9 @@
 import streamlit as st
+import subprocess as _subprocess
+try:
+    _APP_VERSION = _subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=_subprocess.DEVNULL).decode().strip()
+except Exception:
+    _APP_VERSION = "unknown"
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -2439,7 +2444,7 @@ def enrich_mapping_with_kde(df, mapping_df, min_price=10000):
     return enriched, filtered
 # タイトル
 st.title("👜 ブランドECスクレイパー")
-st.caption("ECサイトとブランドを選んで商品データを取得")
+st.caption(f"ECサイトとブランドを選んで商品データを取得　|　{_APP_VERSION}")
 # サイドバー
 with st.sidebar:
     st.markdown("### 🏬 ECサイト選択")
