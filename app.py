@@ -2798,6 +2798,7 @@ if scrape_button:
         targets = [(name, all_site_configs[name]) for name in selected_sites if name in all_site_configs]
         total_sites = len(targets)
         all_results = []
+        _site_logs = []  # 各サイトの結果ログ（rerun後も表示）
         overall_progress = st.progress(0)
         overall_status = st.empty()
         # セカスト用ブランドサジェスト候補
@@ -2850,7 +2851,9 @@ if scrape_button:
                         st.session_state.brand_name = brand_input
                         st.session_state.scraping_done = True
                         _save_results_backup(_interim_df, brand_input)
-                    site_status.text(f"✅ {site_name}: {len(results)}件取得完了（{len(_ss_suggest_brands)}ブランド）")
+                    _result_count = len(results)
+                    site_status.text(f"✅ {site_name}: {_result_count}件取得完了（{len(_ss_suggest_brands)}ブランド）")
+                    _site_logs.append(f"✅ {site_name}: {_result_count}件取得完了（{len(_ss_suggest_brands)}ブランド）")
                     del results
                     _gc.collect()
                     continue
@@ -2879,6 +2882,7 @@ if scrape_button:
                 if not product_urls:
                     site_status.text(f"⚠️ {site_name}: 商品が見つかりませんでした")
                     site_progress.progress(1.0)
+                    _site_logs.append(f"⚠️ {site_name}: 商品URLが0件（検索結果なし / URL: {base_url}）")
                     continue
                 site_status.text(f"📦 {site_name}: {len(product_urls)}件の商品を発見")
                 if config.get("cached"):
@@ -2931,13 +2935,16 @@ if scrape_button:
                     st.session_state.scraping_done = True
                     _save_results_backup(_interim_df, brand_input)
                     del _interim_df
-                site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
+                _result_count = len(results)
+                site_status.text(f"✅ {site_name}: {_result_count}件取得完了")
                 site_progress.progress(1.0)
+                _site_logs.append(f"✅ {site_name}: {_result_count}件取得完了（URL数: {len(product_urls)}件）")
                 # サイト完了時にメモリ解放（10万件対策）
                 del results
                 _gc.collect()
             except Exception as e:
                 st.error(f"⚠️ {site_name} のスクレイピング中にエラーが発生しました: {e}")
+                _site_logs.append(f"❌ {site_name}: エラー発生 — {e}")
                 # セカストはキャッシュから部分データを救出
                 if site_name == "セカスト" and _secondstreet_cache:
                     rescued = list(_secondstreet_cache.values())
@@ -2959,6 +2966,8 @@ if scrape_button:
                 continue
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
+        # サイト別ログをsession_stateに保存（rerun後も表示するため）
+        st.session_state["_site_scrape_logs"] = _site_logs
         _need_rerun = False
         if all_results:
             df = pd.DataFrame(all_results)
@@ -2981,6 +2990,11 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         site_counts = df["サイト"].value_counts()
         site_summary = " / ".join([f"{EC_SITES[s]['icon']} {s}: {c}件" for s, c in site_counts.items() if s in EC_SITES])
         st.info(f"📊 サイト別内訳: {site_summary}")
+    # サイト別スクレイピングログ表示（エラー原因を可視化）
+    if st.session_state.get("_site_scrape_logs"):
+        with st.expander("📋 サイト別スクレイピングログ", expanded=any("❌" in l or "⚠️" in l for l in st.session_state["_site_scrape_logs"])):
+            for _log_line in st.session_state["_site_scrape_logs"]:
+                st.text(_log_line)
     # セカスト再スクレイピングボタン（不足分追加取得）
     _has_ss = ("サイト" in df.columns and "セカスト" in df["サイト"].values) or (st.session_state.get("selected_ec") == "セカスト")
     if _has_ss and st.session_state.brand_name:
