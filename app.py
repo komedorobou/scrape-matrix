@@ -2964,22 +2964,42 @@ if scrape_button:
                         del _interim_df
                 _gc.collect()
                 continue
-        overall_progress.progress(1.0)
-        overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
+        try:
+            overall_progress.progress(1.0)
+            overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
+        except Exception:
+            pass
         # サイト別ログをsession_stateに保存（rerun後も表示するため）
         st.session_state["_site_scrape_logs"] = _site_logs
         _need_rerun = False
-        if all_results:
-            df = pd.DataFrame(all_results)
-            columns = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
-            df = df[[c for c in columns if c in df.columns]]
-            st.session_state.results_df = df
-            st.session_state.brand_name = brand_input
-            st.session_state.scraping_done = True
-            _save_results_backup(df, brand_input)
-            _need_rerun = True
-        else:
-            st.warning("⚠️ どのサイトからも商品を取得できませんでした")
+        try:
+            if all_results:
+                df = pd.DataFrame(all_results)
+                columns = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
+                df = df[[c for c in columns if c in df.columns]]
+                st.session_state.results_df = df
+                st.session_state.brand_name = brand_input
+                st.session_state.scraping_done = True
+                _save_results_backup(df, brand_input)
+                del all_results
+                _gc.collect()
+                _need_rerun = True
+            else:
+                st.warning("⚠️ どのサイトからも商品を取得できませんでした")
+        except Exception as e:
+            st.error(f"⚠️ 結果の保存中にエラーが発生: {e}")
+            # 緊急保存: all_resultsが残っていれば部分保存を試みる
+            try:
+                if all_results:
+                    _emergency_df = pd.DataFrame(all_results[:5000])  # メモリ節約: 最大5000件
+                    _save_results_backup(_emergency_df, brand_input)
+                    st.session_state.results_df = _emergency_df
+                    st.session_state.brand_name = brand_input
+                    st.session_state.scraping_done = True
+                    st.warning(f"⚠️ メモリ不足のため先頭{len(_emergency_df)}件のみ保存しました")
+                    _need_rerun = True
+            except Exception:
+                pass
         if _need_rerun:
             st.rerun()
 # 結果表示（session_stateから）
