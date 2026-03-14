@@ -1,5 +1,9 @@
 import streamlit as st
-_APP_VERSION = "v48"
+import subprocess as _subprocess
+try:
+    _APP_VERSION = _subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=_subprocess.DEVNULL).decode().strip()
+except Exception:
+    _APP_VERSION = "unknown"
 import requests
 from bs4 import BeautifulSoup
 import time
