@@ -896,6 +896,18 @@ def komehyo_get_product_detail(url):
     except Exception as e:
         return None
 # ===== RAGTAG用関数 =====
+_ragtag_thread_local = threading.local()
+def _get_ragtag_thread_session():
+    """RAGTAG: スレッドごとのrequests.Sessionを取得（コネクション再利用）"""
+    if not hasattr(_ragtag_thread_local, 'session'):
+        s = requests.Session()
+        s.headers.update(HEADERS)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
+        s.mount('https://', adapter)
+        s.mount('http://', adapter)
+        _ragtag_thread_local.session = s
+    return _ragtag_thread_local.session
+
 def ragtag_build_url(brand, category):
     """RAGTAG: 検索URLを構築"""
     base_url = EC_SITES["RAGTAG"]["base_url"]
@@ -903,30 +915,33 @@ def ragtag_build_url(brand, category):
     brand_clean = brand.upper().strip().replace(" ", "")
     return f"{base_url}/search?fr={brand_clean}"
 def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
-    """RAGTAG: 商品URLを全ページから取得（リトライ付き）"""
-    urls = []
+    """RAGTAG: 商品URLを全ページから取得（リトライ付き・コネクション再利用）"""
+    url_set = set()
     page = 1
     consecutive_errors = 0
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
     while page <= max_pages:
-        # ページネーション: &page=2, &page=3...
         url = f"{base_url}&page={page}" if page > 1 else base_url
         if progress_callback:
-            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(url_set)}件発見済み）")
         try:
-            res = requests.get(url, headers=HEADERS, timeout=30)
+            res = session.get(url, timeout=30)
             if res.status_code != 200:
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
                     if progress_callback:
-                        progress_callback(f"⚠ 3回連続エラーで中断 / {len(urls)}件取得済み")
+                        progress_callback(f"⚠ 3回連続エラーで中断 / {len(url_set)}件取得済み")
                     break
                 page += 1
                 time.sleep(1)
                 continue
             soup = BeautifulSoup(res.text, 'html.parser')
-            # RAGTAGの商品リンクを取得（/item/ を含むリンク）
             all_links = soup.find_all('a', href=True)
-            new_urls = []
+            new_urls = set()
             for a in all_links:
                 href = a.get('href', '')
                 if '/item/' in href:
@@ -936,15 +951,12 @@ def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
                         full_url = EC_SITES["RAGTAG"]["base_url"] + href
                     else:
                         full_url = EC_SITES["RAGTAG"]["base_url"] + '/' + href
-                    new_urls.append(full_url)
-            new_urls = list(set(new_urls))
+                    new_urls.add(full_url)
+            new_urls -= url_set
             if not new_urls:
                 break
-            before_count = len(urls)
-            urls.extend(new_urls)
-            urls = list(set(urls))
-            if len(urls) == before_count:
-                break
+            url_set.update(new_urls)
+            del soup, res
             consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
@@ -952,15 +964,17 @@ def ragtag_get_product_urls(base_url, max_pages, progress_callback=None):
             consecutive_errors += 1
             if consecutive_errors >= 3:
                 if progress_callback:
-                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み")
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(url_set)}件取得済み")
                 break
             page += 1
             time.sleep(2)
-    return urls
+    session.close()
+    return list(url_set)
 def ragtag_get_product_detail(url):
-    """RAGTAG: 商品詳細を取得"""
+    """RAGTAG: 商品詳細を取得（スレッドローカルSession・メモリ管理付き）"""
     try:
-        res = requests.get(url, headers=HEADERS, timeout=30)
+        session = _get_ragtag_thread_session()
+        res = session.get(url, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
         data = {"URL": url}
         # ブランド名
@@ -1013,6 +1027,7 @@ def ragtag_get_product_detail(url):
                 if has_digit and has_alpha and candidate not in ["FENDI", "GUCCI", "PRADA", "CHANEL", "HERMES", "CELINE", "LOEWE"]:
                     data["品番"] = candidate
                     break
+        del soup, res
         return data
     except Exception as e:
         return None
@@ -1026,29 +1041,34 @@ def trefac_build_url(brand, category):
     else:
         return f"{base_url}/store/search_result.html?srchword={brand_clean}"
 def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
-    """トレファク: 商品URLを全ページから取得（リトライ付き）"""
-    urls = []
+    """トレファク: 商品URLを全ページから取得（リトライ付き・コネクション再利用）"""
+    url_set = set()
     page = 1
     consecutive_errors = 0
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
     while page <= max_pages:
         separator = "&" if "?" in base_url else "?"
         url = f"{base_url}{separator}key={page}"
         if progress_callback:
-            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(url_set)}件発見済み）")
         try:
-            res = requests.get(url, headers=HEADERS, timeout=30)
+            res = session.get(url, timeout=30)
             if res.status_code != 200:
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
                     if progress_callback:
-                        progress_callback(f"⚠ 3回連続エラー（HTTP {res.status_code}）で中断 / {len(urls)}件取得済み")
+                        progress_callback(f"⚠ 3回連続エラー（HTTP {res.status_code}）で中断 / {len(url_set)}件取得済み")
                     break
                 page += 1
                 time.sleep(1)
                 continue
             soup = BeautifulSoup(res.text, 'html.parser')
             all_links = soup.find_all('a', href=True)
-            new_urls = []
+            new_urls = set()
             for a in all_links:
                 href = a.get('href', '')
                 if re.search(r'/store/\d{10,}/', href):
@@ -1058,15 +1078,12 @@ def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
                         full_url = EC_SITES["トレファク"]["base_url"] + href
                     else:
                         full_url = EC_SITES["トレファク"]["base_url"] + '/' + href
-                    new_urls.append(full_url)
-            new_urls = list(set(new_urls))
+                    new_urls.add(full_url)
+            new_urls -= url_set
             if not new_urls:
                 break
-            before_count = len(urls)
-            urls.extend(new_urls)
-            urls = list(set(urls))
-            if len(urls) == before_count:
-                break
+            url_set.update(new_urls)
+            del soup, res
             consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
@@ -1074,13 +1091,14 @@ def trefac_get_product_urls(base_url, max_pages, progress_callback=None):
             consecutive_errors += 1
             if consecutive_errors >= 3:
                 if progress_callback:
-                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み")
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(url_set)}件取得済み")
                 break
             if progress_callback:
                 progress_callback(f"⚠ ページ {page} エラー: {type(e).__name__}（リトライ）")
             page += 1
             time.sleep(2)
-    return urls
+    session.close()
+    return list(url_set)
 _trefac_session = None
 def _get_trefac_session():
     global _trefac_session
@@ -1486,14 +1504,14 @@ def secondstreet_get_product_detail(url):
         return None  # 再開モードで既存URLはスキップ
     return data
 def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callback=None, batch_size=200):
-    """並列処理で商品詳細を取得（バッチ処理対応）"""
+    """並列処理で商品詳細を取得（バッチ処理対応・エグゼキュータ再利用）"""
     results = []
     total = len(urls)
     completed = 0
-    # バッチに分割して処理（メモリ節約＋安定性向上）
-    for batch_start in range(0, total, batch_size):
-        batch_urls = urls[batch_start:batch_start + batch_size]
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # 単一エグゼキュータを再利用（10万件でもスレッド生成は1回だけ）
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for batch_start in range(0, total, batch_size):
+            batch_urls = urls[batch_start:batch_start + batch_size]
             futures = {executor.submit(get_detail_func, url): url for url in batch_urls}
             for future in as_completed(futures):
                 try:
@@ -1505,6 +1523,9 @@ def get_products_parallel(urls, get_detail_func, max_workers=10, progress_callba
                 completed += 1
                 if progress_callback:
                     progress_callback(completed, total)
+            # バッチ間でGC実行（メモリ断片化防止）
+            if batch_start > 0 and batch_start % (batch_size * 10) == 0:
+                _gc.collect()
     return results
 # ===== 件数チェック（1ページ目だけ取得して概算） =====
 def _check_count_komehyo(brand, category):
@@ -2804,6 +2825,8 @@ if scrape_button:
                         st.session_state.scraping_done = True
                         _save_results_backup(_interim_df, brand_input)
                     site_status.text(f"✅ {site_name}: {len(results)}件取得完了（{len(_ss_suggest_brands)}ブランド）")
+                    del results
+                    _gc.collect()
                     continue
                 base_url = config["build_url"](brand_input)
                 site_status.text(f"🔗 {site_name}: {base_url}")
@@ -2863,8 +2886,12 @@ if scrape_button:
                     st.session_state.brand_name = brand_input
                     st.session_state.scraping_done = True
                     _save_results_backup(_interim_df, brand_input)
+                    del _interim_df
                 site_status.text(f"✅ {site_name}: {len(results)}件取得完了")
                 site_progress.progress(1.0)
+                # サイト完了時にメモリ解放（10万件対策）
+                del results
+                _gc.collect()
             except Exception as e:
                 st.error(f"⚠️ {site_name} のスクレイピング中にエラーが発生しました: {e}")
                 # セカストはキャッシュから部分データを救出
@@ -2883,6 +2910,8 @@ if scrape_button:
                         st.session_state.brand_name = brand_input
                         st.session_state.scraping_done = True
                         _save_results_backup(_interim_df, brand_input)
+                        del _interim_df
+                _gc.collect()
                 continue
         overall_progress.progress(1.0)
         overall_status.text(f"✅ {total_sites}サイトのスクレイピング完了！")
