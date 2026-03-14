@@ -797,41 +797,43 @@ def komehyo_build_url(brand, category):
     else:
         return f"{base_url}/{brand_clean}/"
 def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
-    """コメ兵: 商品URLを全ページから取得（リトライ付き）"""
-    urls = []
+    """コメ兵: 商品URLを全ページから取得（リトライ付き・コネクション再利用）"""
+    url_set = set()
     page = 1
     consecutive_errors = 0
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
     while page <= max_pages:
         url = f"{base_url}?page={page}"
         if progress_callback:
-            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(urls)}件発見済み）")
+            progress_callback(f"📄 ページ {page}/{max_pages} の商品リストを取得中...（{len(url_set)}件発見済み）")
         try:
-            res = requests.get(url, headers=HEADERS, timeout=30)
+            res = session.get(url, timeout=30)
             if res.status_code != 200:
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
                     if progress_callback:
-                        progress_callback(f"⚠ 3回連続エラーで中断 / {len(urls)}件取得済み")
+                        progress_callback(f"⚠ 3回連続エラーで中断 / {len(url_set)}件取得済み")
                     break
                 page += 1
                 time.sleep(1)
                 continue
             soup = BeautifulSoup(res.text, 'html.parser')
             links = soup.select('a[href*="/product/"]')
-            new_urls = []
+            new_urls = set()
             for a in links:
                 href = a.get('href', '')
                 if '/product/' in href:
                     full_url = EC_SITES["コメ兵"]["base_url"] + href if href.startswith('/') else href
-                    new_urls.append(full_url)
-            new_urls = list(set(new_urls))
+                    new_urls.add(full_url)
+            new_urls -= url_set  # 既存URLを除外
             if not new_urls:
                 break
-            before_count = len(urls)
-            urls.extend(new_urls)
-            urls = list(set(urls))
-            if len(urls) == before_count:
-                break
+            url_set.update(new_urls)
+            del soup, res
             consecutive_errors = 0
             page += 1
             time.sleep(random.uniform(0.5, 1.0))
@@ -839,15 +841,17 @@ def komehyo_get_product_urls(base_url, max_pages, progress_callback=None):
             consecutive_errors += 1
             if consecutive_errors >= 3:
                 if progress_callback:
-                    progress_callback(f"⚠ 3回連続例外で中断 / {len(urls)}件取得済み")
+                    progress_callback(f"⚠ 3回連続例外で中断 / {len(url_set)}件取得済み")
                 break
             page += 1
             time.sleep(2)
-    return urls
+    session.close()
+    return list(url_set)
 def komehyo_get_product_detail(url):
-    """コメ兵: 商品詳細を取得"""
+    """コメ兵: 商品詳細を取得（スレッドローカルSession・メモリ管理付き）"""
     try:
-        res = requests.get(url, headers=HEADERS, timeout=30)
+        session = _get_komehyo_thread_session()
+        res = session.get(url, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
         data = {"URL": url}
         h1 = soup.find('h1')
@@ -887,6 +891,7 @@ def komehyo_get_product_detail(url):
                     ref_match = re.search(r'[￥¥]([\d,]+)', val)
                     if ref_match:
                         data["参考上代"] = int(ref_match.group(1).replace(',', ''))
+        del soup, res
         return data
     except Exception as e:
         return None
@@ -1085,6 +1090,18 @@ def _get_trefac_session():
     return _trefac_session
 
 # スレッドローカルセッション（並列処理用：スレッドごとにコネクション再利用）
+_komehyo_thread_local = threading.local()
+def _get_komehyo_thread_session():
+    """コメ兵: スレッドごとのrequests.Sessionを取得（コネクション再利用で大量取得安定化）"""
+    if not hasattr(_komehyo_thread_local, 'session'):
+        s = requests.Session()
+        s.headers.update(HEADERS)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
+        s.mount('https://', adapter)
+        s.mount('http://', adapter)
+        _komehyo_thread_local.session = s
+    return _komehyo_thread_local.session
+
 _trefac_thread_local = threading.local()
 def _get_trefac_thread_session():
     """スレッドごとのrequests.Sessionを取得（コネクション再利用で高速化）"""
