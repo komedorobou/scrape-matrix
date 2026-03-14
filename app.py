@@ -2475,7 +2475,7 @@ with st.sidebar:
             st.caption("📝 例: fendi, gucci, prada, chanel, hermes, celine, loewe")
             # ブランドサジェスト機能（全候補一括検索）
             suggest_btn = st.button("🔍 ブランド候補を検索", key="brand_suggest_btn",
-                                    use_container_width=True,
+                                    width="stretch",
                                     help="入力中のブランド名でセカストのブランド候補を取得し、全候補を一括スクレイピングできます")
             if suggest_btn and brand_input and len(brand_input) >= 2:
                 scraper_key = st.session_state.get("scraper_api_key", "")
@@ -2562,10 +2562,10 @@ with st.sidebar:
     })();
     </script>
     """, height=0)
-    count_button = st.button("📊 件数チェック", use_container_width=True, key="count_check_btn")
-    scrape_button = st.button("🔍 スクレイピング開始", type="primary", use_container_width=True)
+    count_button = st.button("📊 件数チェック", width="stretch", key="count_check_btn")
+    scrape_button = st.button("🔍 スクレイピング開始", type="primary", width="stretch")
     if st.session_state.scraping_done:
-        if st.button("🗑️ 結果をクリア", use_container_width=True):
+        if st.button("🗑️ 結果をクリア", width="stretch"):
             st.session_state.results_df = None
             st.session_state.scraping_done = False
             st.session_state.brand_name = ""
@@ -3026,7 +3026,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         st.divider()
         _ss_count = df[df["サイト"] == "セカスト"].shape[0] if "サイト" in df.columns else len(df)
         st.warning(f"⚠️ セカスト現在 **{_ss_count}件** — 不足がある場合は再取得してください")
-        if st.button("🔄 セカスト不足分を再スクレイピング", use_container_width=True, key="resume_ss_btn"):
+        if st.button("🔄 セカスト不足分を再スクレイピング", width="stretch", key="resume_ss_btn"):
             _resume_brand = st.session_state.brand_name
             # 既存セカストURLを取得
             if "サイト" in df.columns:
@@ -3088,7 +3088,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
     with mcol4:
         if "価格" in df.columns and df["価格"].notna().any():
             st.metric("最高値", f"¥{df['価格'].max():,.0f}")
-    st.dataframe(df, use_container_width=True, height=400)
+    st.dataframe(df, width="stretch", height=400)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if "サイト" in df.columns:
         filename = f"allsites_{st.session_state.brand_name}_{timestamp}.xlsx"
@@ -3101,7 +3101,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
         data=excel_data,
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.xlsx",
-        use_container_width=True
+        width="stretch"
     )
     # ===== 品番→正式名称検索セクション =====
     has_hinban = "品番" in df.columns or "型番" in df.columns
@@ -3136,7 +3136,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                 value=len(unique_hinban),
                 key="hinban_max_lookup",
             )
-            lookup_button = st.button("🔍 正式名称を取得", type="primary", use_container_width=True, key="hinban_lookup_btn")
+            lookup_button = st.button("🔍 正式名称を取得", type="primary", width="stretch", key="hinban_lookup_btn")
             if lookup_button:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -3183,7 +3183,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                 display_df["KDE代表価格"] = display_df["KDE代表価格"].apply(
                     lambda x: f"¥{x:,.0f}" if x > 0 else ""
                 )
-            st.dataframe(display_df, use_container_width=True, height=300)
+            st.dataframe(display_df, width="stretch", height=300)
             if excluded_count > 0:
                 with st.expander(f"🚫 除外された品番を確認（{excluded_count}件: KDE代表価格≤¥10,000）"):
                     excluded_df = enriched_df[
@@ -3195,7 +3195,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                         excluded_df["KDE代表価格"] = excluded_df["KDE代表価格"].apply(
                             lambda x: f"¥{x:,.0f}" if x > 0 else ""
                         )
-                    st.dataframe(excluded_df, use_container_width=True)
+                    st.dataframe(excluded_df, width="stretch")
             st.divider()
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             brand = st.session_state.brand_name
@@ -3324,7 +3324,7 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                 data=excel_data,
                 file_name=f"{brand}_analysis_{ts}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.xlsx",
-                use_container_width=True,
+                width="stretch",
                 key="hinban_mapping_dl",
             )
 # 使い方
