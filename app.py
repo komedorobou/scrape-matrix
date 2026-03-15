@@ -3042,11 +3042,24 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                     and st.session_state.brand_suggest_keyword.lower() in _resume_brand.lower()):
                 _ss_brands = [b["name"] for b in st.session_state.brand_suggest_results]
             _new_results = []
+            _resume_base_df = df.copy()  # マージ用に元DFを保持
+            _resume_cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
             for _bi, _bname in enumerate(_ss_brands):
                 _resume_status.text(f"🔄 [{_bi+1}/{len(_ss_brands)}] {_bname} を再スクレイピング中...")
                 _burl = secondstreet_build_url(_bname, "")
-                def _resume_save_cb(cache_dict):
-                    pass  # 中間保存は不要（マージ時に一括保存）
+                def _resume_save_cb(cache_dict, _base=_resume_base_df, _nr=_new_results, _rb=_resume_brand, _rc=_resume_cols):
+                    """中間保存: 既存DF + これまでの新規結果 + キャッシュ内の新規をマージして保存"""
+                    _rescued = [v for v in cache_dict.values() if "_skip" not in v]
+                    _all_new = _nr + _rescued
+                    if _all_new:
+                        for _r in _all_new:
+                            _r.setdefault("サイト", "セカスト")
+                        _interim_new = pd.DataFrame(_all_new)
+                        _interim_merged = pd.concat([_base, _interim_new], ignore_index=True)
+                        _interim_merged = _interim_merged.drop_duplicates(subset=["URL"], keep="first")
+                        _interim_merged = _interim_merged[[c for c in _rc if c in _interim_merged.columns]]
+                        st.session_state.results_df = _interim_merged
+                        _save_results_backup(_interim_merged, _rb)
                 _purls = secondstreet_get_product_urls(
                     _burl, 999,
                     progress_callback=lambda msg, _s=_resume_status, _n=_bname: _s.text(f"🔄 {_n}: {msg}"),
@@ -3057,16 +3070,22 @@ if st.session_state.scraping_done and st.session_state.results_df is not None:
                     _brand_results = [secondstreet_get_product_detail(u) for u in _purls]
                     _brand_results = [r for r in _brand_results if r]
                     _new_results.extend(_brand_results)
+                    # ブランド完了ごとにマージ保存（セッション消失対策）
+                    for _r in _brand_results:
+                        _r.setdefault("サイト", "セカスト")
+                    _interim_new_df = pd.DataFrame(_new_results)
+                    _interim_merged = pd.concat([_resume_base_df, _interim_new_df], ignore_index=True)
+                    _interim_merged = _interim_merged.drop_duplicates(subset=["URL"], keep="first")
+                    _interim_merged = _interim_merged[[c for c in _resume_cols if c in _interim_merged.columns]]
+                    st.session_state.results_df = _interim_merged
+                    _save_results_backup(_interim_merged, _resume_brand)
                 _resume_progress.progress((_bi + 1) / len(_ss_brands))
             if _new_results:
-                for r in _new_results:
-                    r.setdefault("サイト", "セカスト")
+                # 最終マージ（すでに中間保存済みだが、最終確定版を保存）
                 _new_df = pd.DataFrame(_new_results)
-                # 既存DFとマージ（URL重複除去）
-                _merged = pd.concat([df, _new_df], ignore_index=True)
+                _merged = pd.concat([_resume_base_df, _new_df], ignore_index=True)
                 _merged = _merged.drop_duplicates(subset=["URL"], keep="first")
-                _cols = ["サイト", "ブランド", "商品名", "通称", "カテゴリ", "品番", "型番", "価格", "参考上代", "ランク", "サイズ", "実寸サイズ", "カラー", "素材", "性別", "製造国", "付属品", "URL"]
-                _merged = _merged[[c for c in _cols if c in _merged.columns]]
+                _merged = _merged[[c for c in _resume_cols if c in _merged.columns]]
                 st.session_state.results_df = _merged
                 _save_results_backup(_merged, _resume_brand)
                 _resume_status.text(f"✅ {len(_new_results)}件を追加取得（合計{len(_merged)}件）")
