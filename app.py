@@ -1330,6 +1330,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
             scraper_api_key = st.session_state.get("scraper_api_key", "")
             if not html and scraper_api_key:
                 try:
+                    # まず通常プール（安い）
                     api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false&country_code=jp"
                     res = requests.get(api_url, timeout=60)
                     if res.status_code == 200:
@@ -1345,9 +1346,30 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                                 method = "ScraperAPI(render)"
                 except Exception:
                     pass
+            # 0b) ScraperAPI premium（403時のフォールバック: レジデンシャルIP）
+            if not html and scraper_api_key:
+                try:
+                    api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
+                               f"&url={url}&render=true&wait=5000&country_code=jp&premium=true")
+                    res = requests.get(api_url, timeout=90)
+                    if res.status_code == 200 and not _is_block_page(res.text):
+                        html = res.text
+                        method = "ScraperAPI(premium)"
+                except Exception:
+                    pass
             # 2ページ目以降: 前回成功した軽量方式を優先（Chrome回避）
             if not html and _preferred_method and page > 1:
-                if _preferred_method == "curl_cffi":
+                if _preferred_method == "ScraperAPI(premium)" and scraper_api_key:
+                    try:
+                        api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
+                                   f"&url={url}&render=true&wait=5000&country_code=jp&premium=true")
+                        res = requests.get(api_url, timeout=90)
+                        if res.status_code == 200 and not _is_block_page(res.text):
+                            html = res.text
+                            method = "ScraperAPI(premium)"
+                    except Exception:
+                        pass
+                elif _preferred_method == "curl_cffi":
                     html = _fetch_with_curl(url)
                     if html:
                         method = "curl_cffi"
@@ -1426,7 +1448,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                 continue
             # 1ページ目で成功した方式を記憶（Chrome以外）
             if page == 1:
-                if method in ("curl_cffi", "cloudscraper", "ScraperAPI", "ScraperAPI(render)"):
+                if method in ("curl_cffi", "cloudscraper", "ScraperAPI", "ScraperAPI(render)", "ScraperAPI(premium)"):
                     _preferred_method = method
                 elif method in ("Chrome", "Chrome(refresh)") and _chrome_cookies:
                     _preferred_method = "requests+cookies"
@@ -1750,6 +1772,16 @@ def _fetch_secondstreet_html(url, scraper_api_key=""):
                     html = res.text
             except Exception:
                 pass
+        # premium（レジデンシャルIP）
+        if not html:
+            try:
+                api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
+                           f"&url={url}&render=true&wait=5000&country_code=jp&premium=true")
+                res = requests.get(api_url, timeout=90)
+                if res.status_code == 200 and not _is_block_page(res.text):
+                    html = res.text
+            except Exception:
+                pass
     if not html:
         html = _fetch_with_chrome(url)
     if not html:
@@ -1888,6 +1920,24 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
                     debug += f"ScraperAPI(norender): HTTP {res.status_code}; "
             except Exception as e:
                 debug += f"ScraperAPI(norender): {e}; "
+        # 0c) ScraperAPI premium（レジデンシャルIP: Cloudflare突破率高）
+        if not html and scraper_api_key:
+            try:
+                api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
+                           f"&url={url}&render=true&wait=5000&country_code=jp&premium=true")
+                res = requests.get(api_url, timeout=90)
+                if res.status_code == 200:
+                    html = res.text
+                    method = "ScraperAPI(premium)"
+                    count, info = _parse_secondstreet_count(html, method)
+                    if count > 0:
+                        return count, url, info
+                    debug += f"ScraperAPI(premium): HTML取得済みだが件数0 ({info}); "
+                    html = None
+                else:
+                    debug += f"ScraperAPI(premium): HTTP {res.status_code}; "
+            except Exception as e:
+                debug += f"ScraperAPI(premium): {e}; "
         if not scraper_api_key:
             debug += "ScraperAPI: キーなし; "
         # 1) Chrome（undetected-chromedriver）
