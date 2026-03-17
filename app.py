@@ -25,6 +25,7 @@ except Exception:
     _scraper = None
 # curl_cffi（ブラウザTLS指紋を再現してCloudflare突破）
 _curl_session = None
+_curl_warmed_hosts = set()  # Cookie取得済みホスト
 def _get_curl_session():
     """curl_cffi のセッションを取得"""
     global _curl_session
@@ -36,15 +37,66 @@ def _get_curl_session():
         return _curl_session
     except Exception:
         return None
+def _curl_warmup(s, url):
+    """初回アクセス前にトップページでCookieを取得"""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc
+        if host in _curl_warmed_hosts:
+            return
+        origin = f"https://{host}"
+        s.get(origin, timeout=15, headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        })
+        _curl_warmed_hosts.add(host)
+    except Exception:
+        pass
+def _is_block_page(html):
+    """HTMLがブロックページ/チャレンジページかどうかを判定"""
+    if len(html) < 5000:
+        lower = html.lower()
+        block_signals = [
+            'cf-browser-verification', 'cf-challenge', 'cloudflare',
+            'just a moment', 'checking your browser', 'ray id',
+            'access denied', 'forbidden', '403',
+            'captcha', 'recaptcha', 'hcaptcha',
+        ]
+        if any(sig in lower for sig in block_signals):
+            return True
+        # タイトルが空でHTMLが極端に短い
+        if len(html) < 4000 and ('<title></title>' in lower or '<title> </title>' in lower):
+            return True
+    return False
 def _fetch_with_curl(url, timeout=30):
-    """curl_cffiでページを取得。成功時は(html, status_code)、失敗時はNone"""
+    """curl_cffiでページを取得。成功時はHTMLテキスト、失敗時はNone"""
     s = _get_curl_session()
     if s is None:
         return None
     try:
-        res = s.get(url, timeout=timeout)
+        _curl_warmup(s, url)
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        res = s.get(url, timeout=timeout, headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+            "Referer": f"https://{parsed.netloc}/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        })
         if res.status_code == 200:
-            return res.text
+            html = res.text
+            if _is_block_page(html):
+                return None
+            return html
         return None
     except Exception:
         return None
@@ -1278,7 +1330,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
             scraper_api_key = st.session_state.get("scraper_api_key", "")
             if not html and scraper_api_key:
                 try:
-                    api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false"
+                    api_url = f"https://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=false&country_code=jp"
                     res = requests.get(api_url, timeout=60)
                     if res.status_code == 200:
                         if '.itemCard' in res.text or 'itemCard' in res.text:
@@ -1286,7 +1338,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                             method = "ScraperAPI"
                         else:
                             api_url2 = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
-                                        f"&url={url}&render=true&wait=5000")
+                                        f"&url={url}&render=true&wait=5000&country_code=jp")
                             res2 = requests.get(api_url2, timeout=90)
                             if res2.status_code == 200:
                                 html = res2.text
@@ -1341,7 +1393,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
             if not html and _scraper:
                 try:
                     res = _scraper.get(url, headers=HEADERS, timeout=30)
-                    if res.status_code == 200:
+                    if res.status_code == 200 and not _is_block_page(res.text):
                         html = res.text
                         method = "cloudscraper"
                 except Exception:
@@ -1353,10 +1405,10 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                     if _chrome_cookies:
                         ss.cookies.update(_chrome_cookies)
                     res = ss.get(url, timeout=30)
-                    if res.status_code == 200:
+                    if res.status_code == 200 and not _is_block_page(res.text):
                         html = res.text
                         method = "requests"
-                    else:
+                    elif res.status_code != 200:
                         if progress_callback:
                             progress_callback(f"⚠ ページ {page}: HTTP {res.status_code}（リトライ）")
                 except Exception:
@@ -1683,7 +1735,7 @@ def _fetch_secondstreet_html(url, scraper_api_key=""):
     if scraper_api_key:
         try:
             api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
-                       f"&url={url}&render=true&wait=5000")
+                       f"&url={url}&render=true&wait=5000&country_code=jp")
             res = requests.get(api_url, timeout=90)
             if res.status_code == 200:
                 html = res.text
@@ -1692,7 +1744,7 @@ def _fetch_secondstreet_html(url, scraper_api_key=""):
         if not html:
             try:
                 api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
-                           f"&url={url}&render=false")
+                           f"&url={url}&render=false&country_code=jp")
                 res = requests.get(api_url, timeout=60)
                 if res.status_code == 200:
                     html = res.text
@@ -1705,7 +1757,7 @@ def _fetch_secondstreet_html(url, scraper_api_key=""):
     if not html and _scraper:
         try:
             res = _scraper.get(url, headers=HEADERS, timeout=15)
-            if res.status_code == 200:
+            if res.status_code == 200 and not _is_block_page(res.text):
                 html = res.text
         except Exception:
             pass
@@ -1713,7 +1765,7 @@ def _fetch_secondstreet_html(url, scraper_api_key=""):
         try:
             ss = _get_secondstreet_session()
             res = ss.get(url, timeout=30)
-            if res.status_code == 200:
+            if res.status_code == 200 and not _is_block_page(res.text):
                 html = res.text
         except Exception:
             pass
@@ -1804,7 +1856,7 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
         if scraper_api_key:
             try:
                 api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
-                           f"&url={url}&render=true&wait=5000")
+                           f"&url={url}&render=true&wait=5000&country_code=jp")
                 res = requests.get(api_url, timeout=90)
                 if res.status_code == 200:
                     html = res.text
@@ -1822,7 +1874,7 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
         if not html and scraper_api_key:
             try:
                 api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
-                           f"&url={url}&render=false")
+                           f"&url={url}&render=false&country_code=jp")
                 res = requests.get(api_url, timeout=60)
                 if res.status_code == 200:
                     html = res.text
@@ -1857,8 +1909,11 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
             try:
                 res = _scraper.get(url, headers=HEADERS, timeout=15)
                 if res.status_code == 200:
-                    html = res.text
-                    method = "cloudscraper"
+                    if _is_block_page(res.text):
+                        debug += f"cloudscraper: ブロックページ({len(res.text)}文字); "
+                    else:
+                        html = res.text
+                        method = "cloudscraper"
                 else:
                     debug += f"cloudscraper: HTTP {res.status_code}; "
             except Exception as e:
@@ -1869,8 +1924,11 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
                 ss = _get_secondstreet_session()
                 res = ss.get(url, timeout=30)
                 if res.status_code == 200:
-                    html = res.text
-                    method = "requests"
+                    if _is_block_page(res.text):
+                        debug += f"requests: ブロックページ({len(res.text)}文字); "
+                    else:
+                        html = res.text
+                        method = "requests"
                 else:
                     debug += f"requests: HTTP {res.status_code}; "
             except Exception as e:
