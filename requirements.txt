@@ -6,4 +6,3 @@ numpy
 openpyxl
 cloudscraper
 curl_cffi
-playwright

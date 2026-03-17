@@ -38,20 +38,15 @@ echo.
 
 REM ========== Install / update packages ==========
 echo   Checking libraries...
-venv\Scripts\python.exe -m pip install --disable-pip-version-check -q setuptools streamlit requests beautifulsoup4 pandas openpyxl undetected-chromedriver playwright
+venv\Scripts\python.exe -m pip install --disable-pip-version-check -q setuptools streamlit requests beautifulsoup4 pandas openpyxl undetected-chromedriver
 if errorlevel 1 (
     echo   [ERROR] pip install failed.
     pause
     exit /b 1
 )
 
-REM ========== Install Playwright browsers ==========
-echo   Installing Playwright Chromium...
-venv\Scripts\python.exe -m playwright install chromium >nul 2>&1
-echo         Done.
-
 REM ========== Verify ==========
-venv\Scripts\python.exe -c "import undetected_chromedriver; import streamlit; import playwright; print()"
+venv\Scripts\python.exe -c "import undetected_chromedriver; import streamlit; print()"
 if errorlevel 1 (
     echo   [ERROR] Package verification failed.
     pause
