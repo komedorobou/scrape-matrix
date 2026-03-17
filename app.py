@@ -59,18 +59,31 @@ def _curl_warmup(s, url):
         pass
 def _is_block_page(html):
     """HTMLがブロックページ/チャレンジページかどうかを判定"""
-    if len(html) < 5000:
-        lower = html.lower()
+    if not html:
+        return True
+    lower = html.lower()
+    if len(html) < 10000:
         block_signals = [
             'cf-browser-verification', 'cf-challenge', 'cloudflare',
             'just a moment', 'checking your browser', 'ray id',
-            'access denied', 'forbidden', '403',
-            'captcha', 'recaptcha', 'hcaptcha',
+            'access denied', 'forbidden',
+            'captcha', 'recaptcha', 'hcaptcha', 'turnstile',
+            'challenge-platform', 'cf-chl-', 'managed-challenge',
         ]
         if any(sig in lower for sig in block_signals):
             return True
-        # タイトルが空でHTMLが極端に短い
-        if len(html) < 4000 and ('<title></title>' in lower or '<title> </title>' in lower):
+    if len(html) < 5000:
+        # タイトルが空または存在しない
+        import re as _re
+        title_match = _re.search(r'<title[^>]*>(.*?)</title>', lower)
+        if title_match:
+            if not title_match.group(1).strip():
+                return True
+        elif '<html' in lower:
+            # HTMLだがtitleタグがない → 異常
+            return True
+        # itemCardが1つもない短いHTML → ブロックページの可能性大
+        if 'itemcard' not in lower and '2ndstreet' not in lower:
             return True
     return False
 def _fetch_with_curl(url, timeout=30):
@@ -100,6 +113,144 @@ def _fetch_with_curl(url, timeout=30):
         return None
     except Exception:
         return None
+# Playwright + stealth（Cloudflare Turnstile/JS Challenge突破用）
+_pw_instance = None
+_pw_browser = None
+_pw_context = None
+_pw_available = None  # None=未チェック, True/False
+
+def _ensure_playwright():
+    """Playwrightとブラウザがインストールされているか確認・自動インストール"""
+    global _pw_available
+    if _pw_available is not None:
+        return _pw_available
+    try:
+        import playwright
+        # Chromiumが未インストールなら自動インストール
+        _subprocess.run(
+            [_sys.executable, "-m", "playwright", "install", "chromium"],
+            timeout=120, capture_output=True
+        )
+        _pw_available = True
+    except Exception:
+        _pw_available = False
+    return _pw_available
+
+def _get_playwright_context():
+    """Playwright のブラウザコンテキストを取得（シングルトン）"""
+    global _pw_instance, _pw_browser, _pw_context
+    if _pw_context is not None:
+        try:
+            _pw_context.pages  # 生存確認
+            return _pw_context
+        except Exception:
+            _pw_context = None
+            _pw_browser = None
+    if not _ensure_playwright():
+        return None
+    try:
+        from playwright.sync_api import sync_playwright
+        _pw_instance = sync_playwright().start()
+        _pw_browser = _pw_instance.chromium.launch(
+            headless=True,
+            args=[
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process',
+            ]
+        )
+        _pw_context = _pw_browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
+            locale="ja-JP",
+            timezone_id="Asia/Tokyo",
+            color_scheme="light",
+        )
+        # stealth: webdriver検知回避 + fingerprint偽装
+        _pw_context.add_init_script("""
+            // webdriver プロパティを隠す
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            delete navigator.__proto__.webdriver;
+            // 言語設定
+            Object.defineProperty(navigator, 'languages', {get: () => ['ja', 'en-US', 'en']});
+            // プラグイン偽装
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => {
+                    const plugins = [
+                        {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+                        {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+                        {name: 'Native Client', filename: 'internal-nacl-plugin'},
+                    ];
+                    plugins.length = 3;
+                    return plugins;
+                }
+            });
+            // chrome オブジェクト
+            window.chrome = {
+                runtime: {
+                    PlatformOs: {MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd'},
+                    PlatformArch: {ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64'},
+                    PlatformNaclArch: {ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64'},
+                    RequestUpdateCheckStatus: {THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available'},
+                    OnInstalledReason: {INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update'},
+                    OnRestartRequiredReason: {APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic'},
+                },
+            };
+            // permissions API
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) =>
+                parameters.name === 'notifications'
+                    ? Promise.resolve({state: Notification.permission})
+                    : originalQuery(parameters);
+            // WebGL vendor/renderer
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) return 'Intel Inc.';
+                if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+                return getParameter.call(this, parameter);
+            };
+        """)
+        return _pw_context
+    except Exception:
+        _pw_available = False
+        return None
+
+def _fetch_with_playwright(url, timeout=30):
+    """Playwrightでページを取得（Cloudflare JS Challenge対応）。成功時はHTMLテキスト、失敗時はNone"""
+    ctx = _get_playwright_context()
+    if ctx is None:
+        return None
+    page = None
+    try:
+        page = ctx.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        # Cloudflare challenge 待機（最大15秒）
+        for _ in range(30):
+            title = page.title()
+            content = page.content()
+            # challenge完了判定
+            if "just a moment" not in title.lower() and "attention" not in title.lower():
+                if len(content) > 5000 or '.itemCard' in content:
+                    break
+            page.wait_for_timeout(500)
+        # 追加の安定待ち
+        page.wait_for_timeout(2000)
+        html = page.content()
+        page.close()
+        if _is_block_page(html):
+            return None
+        if len(html) < 3000:
+            return None
+        return html
+    except Exception:
+        if page:
+            try:
+                page.close()
+            except Exception:
+                pass
+        return None
+
 # undetected-chromedriver（ローカルChrome用）
 _uc_driver = None
 def _get_uc_driver():
@@ -1359,7 +1510,11 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                     pass
             # 2ページ目以降: 前回成功した軽量方式を優先（Chrome回避）
             if not html and _preferred_method and page > 1:
-                if _preferred_method == "ScraperAPI(premium)" and scraper_api_key:
+                if _preferred_method == "Playwright":
+                    html = _fetch_with_playwright(url)
+                    if html:
+                        method = "Playwright"
+                elif _preferred_method == "ScraperAPI(premium)" and scraper_api_key:
                     try:
                         api_url = (f"https://api.scraperapi.com?api_key={scraper_api_key}"
                                    f"&url={url}&render=true&wait=5000&country_code=jp&premium=true")
@@ -1391,6 +1546,12 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                             method = "requests+cookies"
                     except Exception:
                         pass
+            # 0c) Playwright + stealth（Cloudflare JS Challenge突破）
+            if not html:
+                html = _fetch_with_playwright(url)
+                if html:
+                    method = "Playwright"
+                    _preferred_method = "Playwright"
             # 1) Chrome（1ページ目 or Cookie切れ時のリフレッシュ用、最大3回）
             if not html and (page == 1 or _cookie_refresh_count < 3):
                 html = _fetch_with_chrome(url)
@@ -1448,7 +1609,7 @@ def secondstreet_get_product_urls(base_url, max_pages, progress_callback=None, s
                 continue
             # 1ページ目で成功した方式を記憶（Chrome以外）
             if page == 1:
-                if method in ("curl_cffi", "cloudscraper", "ScraperAPI", "ScraperAPI(render)", "ScraperAPI(premium)"):
+                if method in ("curl_cffi", "cloudscraper", "ScraperAPI", "ScraperAPI(render)", "ScraperAPI(premium)", "Playwright"):
                     _preferred_method = method
                 elif method in ("Chrome", "Chrome(refresh)") and _chrome_cookies:
                     _preferred_method = "requests+cookies"
@@ -1783,6 +1944,8 @@ def _fetch_secondstreet_html(url, scraper_api_key=""):
             except Exception:
                 pass
     if not html:
+        html = _fetch_with_playwright(url)
+    if not html:
         html = _fetch_with_chrome(url)
     if not html:
         html = _fetch_with_curl(url)
@@ -1940,14 +2103,21 @@ def _check_count_secondstreet(brand, category, scraper_api_key=""):
                 debug += f"ScraperAPI(premium): {e}; "
         if not scraper_api_key:
             debug += "ScraperAPI: キーなし; "
-        # 1) Chrome（undetected-chromedriver）
+        # 1) Playwright + stealth（Cloudflare JS Challenge突破）
+        if not html:
+            html = _fetch_with_playwright(url)
+            if html:
+                method = "Playwright"
+            else:
+                debug += "Playwright: 失敗; "
+        # 2) Chrome（undetected-chromedriver）
         if not html:
             html = _fetch_with_chrome(url)
             if html:
                 method = "Chrome"
             else:
                 debug += "Chrome: 失敗; "
-        # 2) curl_cffi（TLS指紋偽装）
+        # 3) curl_cffi（TLS指紋偽装）
         if not html:
             html = _fetch_with_curl(url)
             if html:
