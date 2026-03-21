@@ -108,13 +108,34 @@ def _get_uc_driver():
     if _uc_driver is not None:
         return _uc_driver
     try:
+        import ssl as _ssl_mod
+        _ssl_mod._create_default_https_context = _ssl_mod._create_unverified_context
         import undetected_chromedriver as uc
+        import platform, subprocess as _sp
         options = uc.ChromeOptions()
-        options.add_argument('--headless=new')
+        # macOS: システムChromeのパスを指定
+        if platform.system() == "Darwin":
+            _chrome_paths = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                _os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ]
+            for _p in _chrome_paths:
+                if _os.path.exists(_p):
+                    options.binary_location = _p
+                    break
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        _uc_driver = uc.Chrome(options=options, version_main=None)
+        options.add_argument('--window-size=1280,800')
+        # Chromeバージョンを取得
+        _version_main = None
+        try:
+            _chrome_bin = options.binary_location or "google-chrome"
+            _ver = _sp.check_output([_chrome_bin, "--version"], stderr=_sp.DEVNULL).decode().strip()
+            _version_main = int(_ver.split()[-1].split('.')[0])
+        except Exception:
+            pass
+        _uc_driver = uc.Chrome(options=options, version_main=_version_main, use_subprocess=True)
         _uc_driver.set_page_load_timeout(30)
         return _uc_driver
     except Exception:
@@ -2633,7 +2654,10 @@ with st.sidebar:
     st.divider()
     # ScraperAPI設定（セカスト用・Streamlit Cloud対応）
     # st.secrets に SCRAPER_API_KEY があれば自動で使う
-    secrets_key = st.secrets.get("SCRAPER_API_KEY", "") if hasattr(st, "secrets") else ""
+    try:
+        secrets_key = st.secrets.get("SCRAPER_API_KEY", "") if hasattr(st, "secrets") else ""
+    except Exception:
+        secrets_key = ""
     if secrets_key and "scraper_api_key" not in st.session_state:
         st.session_state["scraper_api_key"] = secrets_key
     with st.expander("🔑 ScraperAPI設定（セカスト用）", expanded=False):
